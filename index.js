@@ -1,14 +1,14 @@
-require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 
+// بررسی وجود متغیرهای حیاتی در پنل Railway برای جلوگیری از کرش
 if (!process.env.BOT_TOKEN || !process.env.ADMIN_CHAT_ID) {
-  console.error('❌ خطا: متغیرهای BOT_TOKEN یا ADMIN_CHAT_ID تعریف نشده‌اند!');
+  console.error('❌ خطا: متغیرهای BOT_TOKEN یا ADMIN_CHAT_ID در پنل Railway تعریف نشده‌اند!');
   process.exit(1);
 }
 
 const token = process.env.BOT_TOKEN;
 const adminChatId = process.env.ADMIN_CHAT_ID;
-const habitFileId = process.env.HABIT_FILE_ID || null; // اگر هنوز ست نکردی، خطا ندهد
+const habitFileId = process.env.HABIT_FILE_ID || null;
 
 const bot = new TelegramBot(token, { polling: true });
 
@@ -56,7 +56,7 @@ bot.on('callback_query', (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
 
-  // مدیریت دکمه‌های بخش مدیریت (ادمین) که با approve_ یا reject_ شروع می‌شوند
+  // مدیریت دکمه‌های بخش مدیریت (ادمین)
   if (data.startsWith('approve_') || data.startsWith('reject_')) {
     handleAdminCallback(query);
     return;
@@ -85,31 +85,24 @@ bot.on('message', (msg) => {
   const username = msg.from.username ? `@${msg.from.username}` : 'بدون آیدی';
   const fullName = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim();
 
-  // لاگ کردن Chat ID برای راحتی پیدا کردن ادمین (در ترمینال نمایش داده می‌شود)
-  if (userText === '/me') {
-    bot.sendMessage(chatId, `شناسه عددی شما: <code>${chatId}</code>`, { parse_mode: 'HTML' });
-    return;
-  }
-
-  // اگر پیام دستور تلگرامی نبود و کاربر از سمت خودش فرستاده بود
   if (userText && userText.startsWith('/')) return;
+  
+  // اگر پیام از طرف خود ادمین بود
   if (String(chatId) === String(adminChatId)) {
-    // اگر ادمین فایلی فرستاد، شناسه فایل رو توی ترمینال چاپ کن تا بتونه برای HABIT_FILE_ID استفاده کنه
+    // اگر ادمین فایلی فرستاد، شناسه فایل رو توی لاگ‌های Railway چاپ کن
     if (msg.document) {
       console.log(`📌 File ID شناسایی شد: ${msg.document.file_id}`);
     }
     return; 
   }
 
-  // بررسی ارسال رسید (چه متن حاوی عدد پیگیری، چه عکس رسید)
+  // بررسی ارسال رسید
   const isTextReceipt = userText && /^[0-9\u06F0-\u06F9\u0660-\u0669\s-]{6,}$/.test(userText.trim());
   const isPhotoReceipt = msg.photo;
 
   if (isTextReceipt || isPhotoReceipt) {
-    // ۱. تایید اولیه به کاربر
     bot.sendMessage(chatId, MESSAGES.receiptProcessing, { parse_mode: 'HTML' });
 
-    // کیبورد تایید/رد برای ادمین که شناسه کاربر رو تو خودش ذخیره میکنه
     const adminKeyboard = {
       reply_markup: {
         inline_keyboard: [
@@ -123,9 +116,7 @@ bot.on('message', (msg) => {
 
     const adminReportText = `🔔 <b>رسید جدید پرداخت!</b>\n\n👤 <b>کاربر:</b> ${fullName} (${username})\n🆔 <b>شناسه کاربر:</b> <code>${chatId}</code>\n📝 <b>توضیحات/کد:</b> ${userText || 'ارسال شده در قالب عکس'}`;
 
-    // ۲. ارسال مشخصات برای ادمین
     if (isPhotoReceipt) {
-      // ارسال بالاترین کیفیت عکس ارسالی
       const photoId = msg.photo[msg.photo.length - 1].file_id;
       bot.sendPhoto(adminChatId, photoId, {
         caption: adminReportText,
@@ -143,22 +134,19 @@ bot.on('message', (msg) => {
 
 // --- مدیریت کلیک ادمین روی دکمه‌های تایید یا رد ---
 function handleAdminCallback(query) {
-  const adminAction = query.data; // به صورت approve_12345 یا reject_12345
+  const adminAction = query.data;
   const [action, targetUserId] = adminAction.split('_');
   
   if (action === 'approve') {
-    // ۱. اطلاع به کاربر و ارسال خودکار فایل
     bot.sendMessage(targetUserId, MESSAGES.purchaseApproved, { parse_mode: 'HTML' })
       .then(() => {
-        if (habitFileId) {
-          // ارسال فایل با استفاده از File ID تلگرام (بهترین و سریع‌ترین حالت)
+        if (habitFileId && habitFileId !== '123') {
           bot.sendDocument(targetUserId, habitFileId, { caption: '🎁 فایل هبیت‌ترکر شیترا' });
         } else {
-          bot.sendMessage(targetUserId, `⚠️ فایل هنوز در سیستم آپلود نشده است. لطفاً به پشتیبانی پیام دهید.`);
+          bot.sendMessage(targetUserId, `⚠️ فایل هبیت‌ترکر هنوز روی سیستم پیکربندی نشده است. لطفا به پشتیبانی پیام دهید.`);
         }
       });
 
-    // ۲. ویرایش پیام ادمین برای تغییر وضعیت و جلوگیری از کلیک مجدد
     bot.editMessageCaption(`✅ این رسید تایید شد و فایل برای کاربر ارسال گردید.`, {
       chat_id: adminChatId,
       message_id: query.message.message_id
@@ -170,10 +158,8 @@ function handleAdminCallback(query) {
     });
 
   } else if (action === 'reject') {
-    // ۱. اطلاع به کاربر مبنی بر رد شدن رسید
     bot.sendMessage(targetUserId, MESSAGES.purchaseRejected, { parse_mode: 'HTML' });
 
-    // ۲. ویرایش پیام ادمین
     bot.editMessageCaption(`❌ این تراکنش توسط شما رد شد.`, {
       chat_id: adminChatId,
       message_id: query.message.message_id
@@ -185,7 +171,6 @@ function handleAdminCallback(query) {
     });
   }
 
-  // بستن حالت لودینگ دکمه ادمین
   bot.answerCallbackQuery(query.id, { text: 'دستور اجرا شد' });
 }
 
@@ -193,4 +178,4 @@ function handleAdminCallback(query) {
 bot.on('polling_error', (err) => console.warn(`[Polling Error]: ${err.message}`));
 bot.on('error', (err) => console.error(`[Bot Error]: ${err.message}`));
 
-console.log('🤖 ربات شیترا (سیستم ادمین و تایید رسید) فعال شد...');
+console.log('🤖 ربات شیترا با موفقیت روی Railway راه‌اندازی شد...');
