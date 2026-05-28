@@ -9,6 +9,8 @@ if (!process.env.BOT_TOKEN || !process.env.ADMIN_CHAT_ID) {
 const token = process.env.BOT_TOKEN;
 const adminChatId = process.env.ADMIN_CHAT_ID;
 const habitFileId = process.env.HABIT_FILE_ID || null;
+// متغیر جدید برای عکس مرحله پرداخت
+const paymentPhotoId = process.env.PAYMENT_PHOTO_ID || null; 
 
 const bot = new TelegramBot(token, { polling: true });
 
@@ -72,7 +74,17 @@ bot.on('callback_query', (query) => {
   // دکمه‌های معمولی کاربر
   switch (data) {
     case 'buy_habit':
-      bot.sendMessage(chatId, MESSAGES.buyHabit, { parse_mode: 'HTML' });
+      // بررسی اینکه آیا عکس در متغیرهای Railway ست شده یا نه
+      if (paymentPhotoId && paymentPhotoId !== '123') {
+        // ارسال پیام همراه با عکس
+        bot.sendPhoto(chatId, paymentPhotoId, { 
+          caption: MESSAGES.buyHabit, 
+          parse_mode: 'HTML' 
+        });
+      } else {
+        // حالت پیش‌فرض: اگر عکسی ست نشده بود، فقط متن را بفرست
+        bot.sendMessage(chatId, MESSAGES.buyHabit, { parse_mode: 'HTML' });
+      }
       break;
     case 'tutorials':
       bot.sendMessage(chatId, MESSAGES.tutorials, { 
@@ -100,8 +112,13 @@ bot.on('message', (msg) => {
   
   // ۲. اگر پیام از طرف خود ادمین بود
   if (String(chatId) === String(adminChatId)) {
+    // چاپ File ID برای فایل‌ها
     if (msg.document) {
       console.log(`📌 File ID شناسایی شد: ${msg.document.file_id}`);
+    }
+    // چاپ Photo ID برای عکس‌ها (بالاترین کیفیت عکس ارسالی)
+    if (msg.photo) {
+      console.log(`📸 Photo ID شناسایی شد: ${msg.photo[msg.photo.length - 1].file_id}`);
     }
     return; 
   }
