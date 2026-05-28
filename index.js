@@ -16,13 +16,13 @@ const bot = new TelegramBot(token, { polling: true });
 const MESSAGES = {
   welcome: `<b>سلام رفیق! 👋</b>\n\nبه <b>شیترا</b> خوش اومدی. اینجا قراره با هم کنترل زمان، اهداف و عادت‌هامون رو به دست بگیریم و به منظم‌ترین نسخه خودمون تبدیل بشیم.\n\nاز منوی زیر انتخاب کن چطور می‌تونم تو این مسیر کمکت کنم:`,
   
-  buyHabit: `<b>🎯 شروع یک تغییر بزرگ (سرمایه‌گذاری روی خودت!)</b>\n\nبا داشتن این هبیت‌ترکر، مسیر رسیدن به اهدافت شفاف‌تر، منظم‌تر و لذت‌بخش‌تر از همیشه میشه. وقتش رسیده که به کارهات نظم بدی. ✨\n\n💳 <b>مبلغ سرمایه‌گذاری:</b> ۲۴۹,۰۰۰ تومان\n🏦 <b>شماره کارت:</b> <code>5022291569609694</code>\n👤 <b>به نام:</b> صالحی\n\n<i>👈 روی شماره کارت ضربه بزن تا به راحتی کپی بشه.</i>\n\nبعد از واریز، کافیه <b>شماره پیگیری، شناسه پرداخت یا عکس رسید</b> رو همینجا برام بفرستی تا بلافاصله فایل و راهنما برات ارسال بشه. 🚀`,
+  buyHabit: `<b>🎯 شروع یک تغییر بزرگ (سرمایه‌گذاری روی خودت!)</b>\n\nبا داشتن این هبیت‌ترکر، مسیر رسیدن به اهدافت شفاف‌تر، منظم‌تر و لذت‌بخش‌تر از همیشه میشه. وقتش رسیده که به کارهات نظم بدی. ✨\n\n💳 <b>مبلغ سرمایه‌گذاری:</b> ۲۴۹,۰۰۰ تومان\n🏦 <b>شماره کارت:</b> <code>5022291569609694</code>\n👤 <b>به نام:</b> صالحی\n\n<i>👈 روی شماره کارت ضربه بزن تا به راحتی کپی بشه.</i>\n\nبعد از واریز، کافیه <b>شماره پیگیری، شناسه پرداخت، متن پیامک بانک یا عکس رسید</b> رو همینجا برام بفرستی تا بلافاصله فایل و راهنما برات ارسال بشه. 🚀`,
   
-  tutorials: `<b>📚 راهنمای مسیر شیترا</b>\n\nبرای اینکه بتونی بالاترین بازدهی رو از پلنرها ببری، ویدیوهای آموزشی کوتاه، کاربردی و قدم‌به‌قدم برات آماده کردیم که به زودی همینجا قرار می‌گیرن. دست پر برمی‌گردیم! 🎥`,
+  tutorials: `<b>💡 چطور از پلنر استفاده کنم؟ (خیلی ساده‌تر از اونیه که فکر می‌کنی! 😎)</b>\n\nاصلاً نیازی نیست فرمول‌نویسی بلد باشی یا قبلاً با گوگل‌شیت کار کرده باشی! همه‌چیز کاملاً آماده و خودکار طراحی شده. تو فقط کارهای روزمره‌ات رو وارد می‌کنی و بقیه کارها (نمودارها و محاسبه رشد) رو خود شیترا انجام میده.\n\n🎁 <b>داخل خود فایلی که دریافت می‌کنی چی هست؟</b>\n• 📽 <b>ویدیو آموزشی اختصاصی:</b> یک راهنمای ویدیویی خیلی کوتاه زیر ۵ دقیقه که همه‌چیز رو قدم‌به‌قدم بهت یاد میده.\n• 📑 <b>راهنمای متنی و تصویری:</b> یک بخش راهنما داخل خود فایل تعبیه شده که هر زمان سوالی داشتی بتونی نگاهش کنی.\n\nفقط کافیه فایل رو روی گوشی، تبلت یا لپ‌تاپ باز کنی و لذت داشتن یک سیستم منظم رو تجربه کنی. \n\n🎯 برای دریافت هبیت‌ترکر و شروع تغییر، دکمه زیر رو لمس کن:`,
   
   support: `<b>👨‍💻 پشتیبانی شیترا</b>\n\nسوالی داری، نیاز به راهنمایی داری یا در فرآیند پرداخت به مشکلی خوردی؟ با خیال راحت به آیدی زیر پیام بده، همیشه کنارتیم:\n\n🆔 @sheetra_support`,
   
-  receiptProcessing: `<b>✅ دریافت شد!</b>\n\nکد یا رسید شما با موفقیت ثبت شد و در صف بررسی قرار گرفت. به محض تایید تراکنش توسط تیم شیترا، فایل هبیت‌ترکر همینجا به صورت خودکار برات ارسال میشه. ممنون از صبوری و اعتمادت! 💙`,
+  receiptProcessing: `<b>✅ دریافت شد!</b>\n\nاطلاعات یا رسید شما با موفقیت ثبت شد و در صف بررسی قرار گرفت. به محض تایید تراکنش توسط تیم شیترا، فایل هبیت‌ترکر همینجا به صورت خودکار برات ارسال میشه. ممنون از صبوری و اعتمادت! 💙`,
   
   purchaseApproved: `<b>🎉 تراکنش شما تایید شد!</b>\n\nممنون از سرمایه‌گذاری ارزشمندی که روی نظم و آینده خودت کردی. در ادامه فایل هبیت‌ترکر به همراه دسترسی‌های لازم برات ارسال میشه. تو مسیر ساخت عادت‌های جدید موفق باشی! 🚀`,
   
@@ -37,6 +37,13 @@ const KEYBOARDS = {
         [{ text: '🎯 دریافت هبیت ترکر و شروع تغییر', callback_data: 'buy_habit' }],
         [{ text: '💡 چطور از پلنرها استفاده کنم؟', callback_data: 'tutorials' }],
         [{ text: '💬 ارتباط مستقیم با پشتیبانی', callback_data: 'support' }]
+      ]
+    }
+  },
+  redirectToBuy: {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🎯 شروع تغییر (دریافت هبیت ترکر)', callback_data: 'buy_habit' }]
       ]
     }
   }
@@ -68,7 +75,11 @@ bot.on('callback_query', (query) => {
       bot.sendMessage(chatId, MESSAGES.buyHabit, { parse_mode: 'HTML' });
       break;
     case 'tutorials':
-      bot.sendMessage(chatId, MESSAGES.tutorials, { parse_mode: 'HTML' });
+      // ارسال پیام راهنما همراه با دکمه هدایت به خرید برای افزایش نرخ تبدیل خریدار
+      bot.sendMessage(chatId, MESSAGES.tutorials, { 
+        parse_mode: 'HTML',
+        ...KEYBOARDS.redirectToBuy
+      });
       break;
     case 'support':
       bot.sendMessage(chatId, MESSAGES.support, { parse_mode: 'HTML' });
@@ -78,57 +89,64 @@ bot.on('callback_query', (query) => {
   bot.answerCallbackQuery(query.id).catch((err) => console.error(err.message));
 });
 
-// --- دریافت رسید (متن یا عکس) و ارجاع به ادمین ---
+// --- دریافت رسید (با هر فرمتی: متن آزاد، اس‌ام‌اس، عکس یا فایل) و ارجاع به ادمین ---
 bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const userText = msg.text;
   const username = msg.from.username ? `@${msg.from.username}` : 'بدون آیدی';
   const fullName = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim();
 
+  // ۱. اگر پیام دستور تلگرامی بود، نادیده بگیر تا تداخلی ایجاد نشود
   if (userText && userText.startsWith('/')) return;
   
-  // اگر پیام از طرف خود ادمین بود
+  // ۲. اگر پیام از طرف خود ادمین بود
   if (String(chatId) === String(adminChatId)) {
-    // اگر ادمین فایلی فرستاد، شناسه فایل رو توی لاگ‌های Railway چاپ کن
     if (msg.document) {
       console.log(`📌 File ID شناسایی شد: ${msg.document.file_id}`);
     }
     return; 
   }
 
-  // بررسی ارسال رسید
-  const isTextReceipt = userText && /^[0-9\u06F0-\u06F9\u0660-\u0669\s-]{6,}$/.test(userText.trim());
-  const isPhotoReceipt = msg.photo;
+  // ۳. ارسال پیام تایید به کاربر
+  bot.sendMessage(chatId, MESSAGES.receiptProcessing, { parse_mode: 'HTML' });
 
-  if (isTextReceipt || isPhotoReceipt) {
-    bot.sendMessage(chatId, MESSAGES.receiptProcessing, { parse_mode: 'HTML' });
-
-    const adminKeyboard = {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '✅ تایید و ارسال فایل', callback_data: `approve_${chatId}` },
-            { text: '❌ رد تراکنش', callback_data: `reject_${chatId}` }
-          ]
+  // دکمه‌های تایید و رد اختصاصی برای ادمین
+  const adminKeyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '✅ تایید و ارسال فایل', callback_data: `approve_${chatId}` },
+          { text: '❌ رد تراکنش', callback_data: `reject_${chatId}` }
         ]
-      }
-    };
-
-    const adminReportText = `🔔 <b>رسید جدید پرداخت!</b>\n\n👤 <b>کاربر:</b> ${fullName} (${username})\n🆔 <b>شناسه کاربر:</b> <code>${chatId}</code>\n📝 <b>توضیحات/کد:</b> ${userText || 'ارسال شده در قالب عکس'}`;
-
-    if (isPhotoReceipt) {
-      const photoId = msg.photo[msg.photo.length - 1].file_id;
-      bot.sendPhoto(adminChatId, photoId, {
-        caption: adminReportText,
-        parse_mode: 'HTML',
-        ...adminKeyboard
-      });
-    } else {
-      bot.sendMessage(adminChatId, adminReportText, {
-        parse_mode: 'HTML',
-        ...adminKeyboard
-      });
+      ]
     }
+  };
+
+  const baseReportText = `🔔 <b>رسید یا پیام جدید پرداخت!</b>\n\n👤 <b>کاربر:</b> ${fullName} (${username})\n🆔 <b>شناسه کاربر:</b> <code>${chatId}</code>`;
+  const textDetails = userText ? `\n📝 <b>متن ارسال شده:</b>\n<code>${userText}</code>` : '\n📝 <b>نوع رسید:</b> عکس یا فایل رسانه‌ای';
+  const adminReportText = baseReportText + textDetails;
+
+  // ۴. ارسال هوشمند به ادمین بر اساس فرمت ارسالی مشتری
+  if (msg.photo) {
+    const photoId = msg.photo[msg.photo.length - 1].file_id;
+    bot.sendPhoto(adminChatId, photoId, {
+      caption: adminReportText,
+      parse_mode: 'HTML',
+      ...adminKeyboard
+    }).catch((err) => console.error('Error photo:', err.message));
+
+  } else if (msg.document) {
+    bot.sendDocument(adminChatId, msg.document.file_id, {
+      caption: adminReportText,
+      parse_mode: 'HTML',
+      ...adminKeyboard
+    }).catch((err) => console.error('Error document:', err.message));
+
+  } else {
+    bot.sendMessage(adminChatId, adminReportText, {
+      parse_mode: 'HTML',
+      ...adminKeyboard
+    }).catch((err) => console.error('Error text:', err.message));
   }
 });
 
