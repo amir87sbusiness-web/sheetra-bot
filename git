@@ -1,0 +1,6 @@
+git init
+git add .
+git commit -m "Initial commit"
+# جایگزین کردن با آدرس مخزن خودت در گیت‌هاب:
+git remote add origin https://github.com/amir87sbusiness-web/sheetra-bot.git
+git push -u origin main
