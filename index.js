@@ -56,13 +56,36 @@ const ADMIN_KEYBOARD = {
   }
 };
 
+// تابع محاسبه زمان باقی‌مانده از چرخه ۴ ساعته تخفیف
+function getDiscountTimerString() {
+  const now = new Date();
+  const currentHour = now.getHours();
+  // پیدا کردن ۴ ساعت بعدی (بامداد، ۴، ۸، ۱۲، ۱۶، ۲۰، ۲۴)
+  const nextIntervalHour = Math.ceil((currentHour + 0.01) / 4) * 4 % 24;
+  
+  let nextReset = new Date(now);
+  nextReset.setHours(nextIntervalHour === 0 ? 24 : nextIntervalHour, 0, 0, 0);
+  
+  const diffMs = nextReset - now;
+  const diffMins = Math.floor(diffMs / 1000 / 60);
+  const hours = Math.floor(diffMins / 60);
+  const minutes = diffMins % 60;
+  
+  return `${hours} ساعت و ${minutes} دقیقه`;
+}
+
+// تابع تبدیل اعداد به فرمت پولی خوانا
+function formatPrice(price) {
+  return String(price).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 // --- منوهای اصلی کاربر ---
 function getMainMenu(firstName) {
   const welcomeText = botData.settings.welcome.replace('{name}', firstName || 'کاربر');
   const keyboard = {
     reply_markup: {
       inline_keyboard: [
-        [{ text: '📚 مشاهده و دریافت پلنرها', callback_markup: {}, callback_data: 'user_products' }],
+        [{ text: '📚 مشاهده و دریافت پلنرها', callback_data: 'user_products' }],
         [{ text: '💡 راهنمای استفاده', callback_data: 'user_tutorials' }, { text: '💬 پشتیبانی', callback_data: 'user_support' }]
       ]
     }
@@ -73,7 +96,6 @@ function getMainMenu(firstName) {
 // --- دستور /start ---
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  // اگر کاربر ادمین بود، دکمه ورود به پنل ادمین را هم نشان بده
   if (String(chatId) === adminChatId) {
     bot.sendMessage(chatId, `🛠 <b>به پنل مدیریت شیترا خوش آمدید.</b>\nجهت استفاده از ابزارهای مدیریت، از نوار ابزار دکمه‌های زیر استفاده کنید.`, {
       parse_mode: 'HTML',
@@ -100,22 +122,18 @@ bot.on('message', (msg) => {
   const text = msg.text;
   const userIdStr = String(chatId);
 
-  // صرف نظر از دستورات اصلی
   if (text && text.startsWith('/')) return;
 
-  // منطق بخش کاربری (دریافت رسید)
   if (userIdStr !== adminChatId) {
     handleUserReceipt(msg);
     return;
   }
 
-  // --- جریان ادمین (پیام‌های دریافتی از ادمین) ---
   if (adminStates[chatId]) {
     handleAdminWorkflow(msg);
     return;
   }
 
-  // ناوبری منوی اصلی ادمین
   switch (text) {
     case '📦 مدیریت محصولات':
       showAdminProductsMenu(chatId);
@@ -150,10 +168,21 @@ bot.on('callback_query', (query) => {
       bot.sendMessage(chatId, '⚠️ در حال حاضر محصولی برای نمایش وجود ندارد.');
       return;
     }
-    const inline_keyboard = pKeys.map(id => ([{ text: `🎯 ${botData.products[id].name}`, callback_data: `view_p_${id}` }]));
+    
+    // تفکیک محصولات معمولی و بسته‌های ترکیبی جهت مرتب‌سازی (ترکیبی‌ها همیشه پایین)
+    const normalProducts = pKeys.filter(id => !botData.products[id].isCombo);
+    const comboProducts = pKeys.filter(id => botData.products[id].isCombo);
+    const sortedKeys = [...normalProducts, ...comboProducts];
+
+    const inline_keyboard = sortedKeys.map(id => {
+      const p = botData.products[id];
+      const icon = p.isCombo ? '🎁' : '🎯';
+      return [{ text: `${icon} ${p.name} | ${formatPrice(p.price)} تومان`, callback_data: `view_p_${id}` }];
+    });
+    
     inline_keyboard.push([{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main' }]);
     
-    bot.editMessageText('📚 <b>لیست پلنرها و محصولات شیترا:</b>\n\nمحصول مورد نظر خود را جهت مشاهده جزئیات انتخاب کنید:', {
+    bot.editMessageText('📚 <b>لیست پلنرها و محصولات شیترا:</b>\n\nمحصول مورد نظر خود را جهت مشاهده جزئیات و دریافت انتخاب کنید:', {
       chat_id: chatId,
       message_id: msgId,
       parse_mode: 'HTML',
@@ -184,7 +213,11 @@ bot.on('callback_query', (query) => {
     const product = botData.products[pId];
     if (!product) return;
 
-    const infoText = `<b>🎯 ${product.name}</b>\n\n${product.description}\n\n💳 <b>مبلغ سرمایه‌گذاری:</b> ${product.price} تومان\n🏦 <b>شماره کارت:</b> <code>${botData.settings.cardNo}</code>\n👤 <b>به نام:</b> ${botData.settings.cardName}\n\n<i>👈 روی شماره کارت ضربه بزنید تا کپی شود.</i>\n\nپس از واریز، <b>رسید پرداخت، اسکرین‌شات یا مشخصات تراکنش</b> را همین‌جا ارسال کنید تا به صورت خودکار فایل برای شما ارسال شود. ✨`;
+    const formattedOriginal = formatPrice(product.originalPrice || product.price);
+    const formattedDiscount = formatPrice(product.price);
+    const timerText = getDiscountTimerString();
+
+    const infoText = `<b>${product.isCombo ? '🎁' : '🎯'} ${product.name}</b>\n\n${product.description}\n\n=======================\n❌ قیمت اصلی: <s>${formattedOriginal} تومان</s>\n🔥 <b>قیمت ویژه با تخفیف:</b> ${formattedDiscount} تومان\n\n⏳ <b>زمان باقی‌مانده تا ریست چرخه تخفیف ویژه:</b>\n⏰ <code>${timerText}</code>\n=======================\n\n🏦 <b>شماره کارت:</b> <code>${botData.settings.cardNo}</code>\n👤 <b>به نام:</b> ${botData.settings.cardName}\n\n<i>👈 روی شماره کارت ضربه بزنید تا کپی شود.</i>\n\nپس از واریز، <b>رسید پرداخت، اسکرین‌شات یا مشخصات تراکنش</b> را همین‌جا ارسال کنید تا به صورت خودکار فایل برای شما ارسال شود. ✨`;
 
     if (product.photoId) {
       bot.sendPhoto(chatId, product.photoId, { caption: infoText, parse_mode: 'HTML' });
@@ -207,12 +240,17 @@ bot.on('callback_query', (query) => {
   else if (data.startsWith('adm_edit_')) {
     const pId = data.replace('adm_edit_', '');
     adminStates[chatId] = { type: 'EDIT_PRODUCT_NAME', pId };
-    bot.sendMessage(chatId, `✍️ نام جدید محصول را ارسال کنید:`);
+    bot.sendMessage(chatId, `✍️ نام جدید محصول/بسته را ارسال کنید:`);
   }
 
   else if (data === 'adm_add_product') {
-    adminStates[chatId] = { type: 'ADD_PRODUCT_NAME' };
-    bot.sendMessage(chatId, '🆕 <b>مراحل افزودن محصول جدید</b>\n\nلطفاً <b>نام محصول</b> را ارسال کنید:');
+    adminStates[chatId] = { type: 'ADD_PRODUCT_NAME', isCombo: false };
+    bot.sendMessage(chatId, '🆕 <b>مراحل افزودن محصول معمولی جدید</b>\n\nلطفاً <b>نام محصول</b> را ارسال کنید:');
+  }
+
+  else if (data === 'adm_add_combo') {
+    adminStates[chatId] = { type: 'ADD_PRODUCT_NAME', isCombo: true };
+    bot.sendMessage(chatId, '🎁 <b>مراحل افزودن بسته ترکیبی جدید</b>\n\nلطفاً <b>نام بسته ترکیبی</b> را ارسال کنید:');
   }
 
   else if (data.startsWith('set_text_')) {
@@ -222,12 +260,11 @@ bot.on('callback_query', (query) => {
   }
 
   // تایید یا رد تراکنش‌های کاربران توسط ادمین
-  // تایید یا رد تراکنش‌های کاربران توسط ادمین
   else if (data.startsWith('approve_')) {
     const parts = data.split('_');
     const targetUserId = parts[1];
     
-    // ✅ اصلاح باگ: ترکیب کردن تمام بخش‌های بعد از آیدی کاربر برای به دست آوردن pId کامل
+    // حل قطعی باگ جداکننده شناسه‌ها با متد slice و join
     const pId = parts.slice(2).join('_'); 
     const product = botData.products[pId];
 
@@ -275,15 +312,21 @@ bot.on('callback_query', (query) => {
 // --- مدیریت منوهای ادمین ---
 function showAdminProductsMenu(chatId) {
   const pKeys = Object.keys(botData.products);
-  let msgText = '📦 <b>مدیریت محصولات شیترا</b>\n\n';
+  let msgText = '📦 <b>مدیریت محصولات و بسته‌های شیترا</b>\n\n';
   const inline_keyboard = [];
 
   if (pKeys.length === 0) {
-    msgText += 'هیچ محصولی تعریف نشده است.';
+    msgText += 'هیچ محصول یا بسته‌ای تعریف نشده است.';
   } else {
-    pKeys.forEach(id => {
+    // مرتب‌سازی در منوی ادمین جهت پایش راحت‌تر (ابتدا محصولات عادی بعد بسته‌های ترکیبی)
+    const normalProducts = pKeys.filter(id => !botData.products[id].isCombo);
+    const comboProducts = pKeys.filter(id => botData.products[id].isCombo);
+    const sortedKeys = [...normalProducts, ...comboProducts];
+
+    sortedKeys.forEach(id => {
       const p = botData.products[id];
-      msgText += `🔹 <b>${p.name}</b> - قیمت: ${p.price} تومان\n`;
+      const typeLabel = p.isCombo ? '🎁 [بسته ترکیبی]' : '🔹 [محصول معمولی]';
+      msgText += `${typeLabel} <b>${p.name}</b>\n❌ قیمت اصلی: ${formatPrice(p.originalPrice || p.price)} | 🔥 با تخفیف: ${formatPrice(p.price)} تومان\n\n`;
       inline_keyboard.push([
         { text: `✏️ ویرایش ${p.name}`, callback_data: `adm_edit_${id}` },
         { text: `🗑 حذف`, callback_data: `adm_del_${id}` }
@@ -291,7 +334,10 @@ function showAdminProductsMenu(chatId) {
     });
   }
 
-  inline_keyboard.push([{ text: '➕ افزودن محصول جدید', callback_data: 'adm_add_product' }]);
+  inline_keyboard.push([
+    { text: '➕ افزودن محصول معمولی', callback_data: 'adm_add_product' },
+    { text: '🎁 افزودن بسته ترکیبی', callback_data: 'adm_add_combo' }
+  ]);
 
   bot.sendMessage(chatId, msgText, {
     parse_mode: 'HTML',
@@ -321,20 +367,25 @@ function handleAdminWorkflow(msg) {
   const text = msg.text;
 
   switch (state.type) {
-    // افزودن محصول جدید
+    // افزودن محصول یا بسته جدید
     case 'ADD_PRODUCT_NAME':
-      adminStates[chatId] = { type: 'ADD_PRODUCT_PRICE', name: text };
-      bot.sendMessage(chatId, `💰 قیمت محصول <b>${text}</b> را به «تومان» وارد کنید (مثال: 249000):`, { parse_mode: 'HTML' });
+      adminStates[chatId] = { ...state, type: 'ADD_PRODUCT_ORIGINAL_PRICE', name: text };
+      bot.sendMessage(chatId, `❌ <b>قیمت اصلی و بدون تخفیف</b> محصول/بسته «${text}» را به تومان وارد کنید (مثال: 350000):`, { parse_mode: 'HTML' });
+      break;
+
+    case 'ADD_PRODUCT_ORIGINAL_PRICE':
+      adminStates[chatId] = { ...state, type: 'ADD_PRODUCT_PRICE', originalPrice: text };
+      bot.sendMessage(chatId, `🔥 حالا <b>قیمت نهایی با تخفیف ویژه</b> را به تومان وارد کنید (مثال: 248000):`, { parse_mode: 'HTML' });
       break;
 
     case 'ADD_PRODUCT_PRICE':
       adminStates[chatId] = { ...state, type: 'ADD_PRODUCT_DESC', price: text };
-      bot.sendMessage(chatId, `✍️ توضیحات و ویژگی‌های محصول را ارسال کنید:`);
+      bot.sendMessage(chatId, `✍️ توضیحات و ویژگی‌های کامل این محصول/بسته را ارسال کنید:`);
       break;
 
     case 'ADD_PRODUCT_DESC':
       adminStates[chatId] = { ...state, type: 'ADD_PRODUCT_PHOTO', description: text };
-      bot.sendMessage(chatId, `📸 یک <b>عکس</b> برای محصول ارسال کنید. (اگر مایل به گذاشتن عکس نیستید دستور /skip را بفرستید):`, { parse_mode: 'HTML' });
+      bot.sendMessage(chatId, `📸 یک <b>عکس کاور</b> ارسال کنید (یا در صورت عدم تمایل دستور /skip را بفرستید):`, { parse_mode: 'HTML' });
       break;
 
     case 'ADD_PRODUCT_PHOTO':
@@ -342,32 +393,39 @@ function handleAdminWorkflow(msg) {
         state.photoId = msg.photo[msg.photo.length - 1].file_id;
       }
       adminStates[chatId] = { ...state, type: 'ADD_PRODUCT_FILE' };
-      bot.sendMessage(chatId, `📁 عالیه! حالا <b>فایل اصلی محصول</b> (مانند Zip, Excel و...) را ارسال کنید تا سیستم پس از خرید خودکار برای کاربر بفرستد:`);
+      bot.sendMessage(chatId, `📁 عالیه! حالا <b>فایل اصلی محصول</b> (مانند PDF، اکسل یا Zip) را ارسال کنید:`);
       break;
 
     case 'ADD_PRODUCT_FILE':
       if (!msg.document) {
-        bot.sendMessage(chatId, `⚠️ لطفا فایل محصول را به صورت Document یا فایل ارسال کنید:`);
+        bot.sendMessage(chatId, `⚠️ لطفا فایل محصول را به صورت Document یا فایل واقعی ارسال کنید:`);
         return;
       }
       const newId = 'p_' + Date.now();
       botData.products[newId] = {
         name: state.name,
+        originalPrice: state.originalPrice,
         price: state.price,
         description: state.description,
         photoId: state.photoId || null,
-        fileId: msg.document.file_id
+        fileId: msg.document.file_id,
+        isCombo: state.isCombo || false
       };
       saveData();
       delete adminStates[chatId];
-      bot.sendMessage(chatId, '🎉 محصول جدید با موفقیت اضافه شد و به منو پیوست شد!');
+      bot.sendMessage(chatId, `🎉 ${state.isCombo ? 'بسته ترکیبی' : 'محصول جدید'} با موفقیت ایجاد و به انتهای منو متصل شد!`);
       showAdminProductsMenu(chatId);
       break;
 
-    // ویرایش محصول موجود
+    // ویرایش محصول یا بسته موجود
     case 'EDIT_PRODUCT_NAME':
-      adminStates[chatId] = { type: 'EDIT_PRODUCT_PRICE', pId: state.pId, name: text };
-      bot.sendMessage(chatId, `💰 قیمت جدید را به «تومان» وارد کنید:`);
+      adminStates[chatId] = { ...state, type: 'EDIT_PRODUCT_ORIGINAL_PRICE', name: text };
+      bot.sendMessage(chatId, `❌ قیمت اصلی جدید (بدون تخفیف) را به تومان وارد کنید:`);
+      break;
+
+    case 'EDIT_PRODUCT_ORIGINAL_PRICE':
+      adminStates[chatId] = { ...state, type: 'EDIT_PRODUCT_PRICE', originalPrice: text };
+      bot.sendMessage(chatId, `🔥 قیمت ویژه جدید (با تخفیف) را به تومان وارد کنید:`);
       break;
 
     case 'EDIT_PRODUCT_PRICE':
@@ -377,7 +435,7 @@ function handleAdminWorkflow(msg) {
 
     case 'EDIT_PRODUCT_DESC':
       adminStates[chatId] = { ...state, type: 'EDIT_PRODUCT_PHOTO', description: text };
-      bot.sendMessage(chatId, `📸 عکس جدید را ارسال کنید (یا برای عدم تغییر عکس /skip بفرستید):`);
+      bot.sendMessage(chatId, `📸 عکس جدید را بفرستید (یا جهت عدم تغییر /skip کنید):`);
       break;
 
     case 'EDIT_PRODUCT_PHOTO':
@@ -385,25 +443,27 @@ function handleAdminWorkflow(msg) {
         state.photoId = msg.photo[msg.photo.length - 1].file_id;
       }
       adminStates[chatId] = { ...state, type: 'EDIT_PRODUCT_FILE' };
-      bot.sendMessage(chatId, `📁 فایل جدید محصول را ارسال کنید (یا برای عدم تغییر فایل قبلی /skip بفرستید):`);
+      bot.sendMessage(chatId, `📁 فایل اصلی جدید را بفرستید (یا جهت عدم تغییر /skip کنید):`);
       break;
 
     case 'EDIT_PRODUCT_FILE':
       const currentProduct = botData.products[state.pId];
       botData.products[state.pId] = {
         name: state.name,
+        originalPrice: state.originalPrice,
         price: state.price,
         description: state.description,
         photoId: state.photoId || currentProduct.photoId,
-        fileId: msg.document ? msg.document.file_id : currentProduct.fileId
+        fileId: msg.document ? msg.document.file_id : currentProduct.fileId,
+        isCombo: currentProduct.isCombo || false // حفظ ساختار پکیج بودن یا نبودن محصول
       };
       saveData();
       delete adminStates[chatId];
-      bot.sendMessage(chatId, '✅ محصول با موفقیت ویرایش و به‌روزرسانی شد.');
+      bot.sendMessage(chatId, '✅ ویرایش و به‌روزرسانی با موفقیت انجام شد.');
       showAdminProductsMenu(chatId);
       break;
 
-    // تنظیمات متون عمومی
+    // تنظیمات متون عمومی ربات
     case 'EDIT_SETTING_TEXT':
       botData.settings[state.key] = text;
       saveData();
@@ -427,7 +487,7 @@ function handleAdminWorkflow(msg) {
   }
 }
 
-// اگر ادمین تمایل به ارسال عکس یا فایل جدید نداشت
+// اگر ادمین تمایل به ارسال عکس یا فایل جدید نداشت (/skip)
 bot.onText(/\/skip/, (msg) => {
   const chatId = msg.chat.id;
   if (String(chatId) !== adminChatId || !adminStates[chatId]) return;
@@ -443,14 +503,16 @@ bot.onText(/\/skip/, (msg) => {
     const currentProduct = botData.products[state.pId];
     botData.products[state.pId] = {
       name: state.name,
+      originalPrice: state.originalPrice,
       price: state.price,
       description: state.description,
       photoId: state.photoId || currentProduct.photoId,
-      fileId: currentProduct.fileId
+      fileId: currentProduct.fileId,
+      isCombo: currentProduct.isCombo || false
     };
     saveData();
     delete adminStates[chatId];
-    bot.sendMessage(chatId, '✅ تغییرات محصول (بدون تغییر فایل قبلی) اعمال شد.');
+    bot.sendMessage(chatId, '✅ تغییرات اعمال شد (بدون تغییر فایل قبلی).');
     showAdminProductsMenu(chatId);
   }
 });
@@ -462,11 +524,8 @@ function handleUserReceipt(msg) {
   const username = msg.from.username ? `@${msg.from.username}` : 'بدون آیدی';
   const fullName = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim();
 
-  // پیدا کردن آخرین محصولی که کاربر احتمالاً در حال خرید آن بوده است (از طریق استخراج نام محصولات)
-  // به عنوان یک راهکار ساده و پایدار، لیست کلید محصولات را می‌فرستیم تا ادمین مشخص کند برای کدام محصول است.
   bot.sendMessage(chatId, `<b>✅ رسید شما دریافت شد!</b>\n\nاطلاعات ارسالی در صف بررسی قرار گرفت. به محض تایید تراکنش توسط مدیریت شیترا، فایل محصول به صورت خودکار برای شما همینجا ارسال خواهد شد.`, { parse_mode: 'HTML' });
 
-  // برای ساده‌تر شدن تصمیم‌گیری ادمین، کلیدهای تایید به همراه شناسه تمام محصولات داینامیک ساخته می‌شود
   const pKeys = Object.keys(botData.products);
   const adminKeyboard = { inline_keyboard: [] };
 
