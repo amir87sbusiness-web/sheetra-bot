@@ -222,10 +222,13 @@ bot.on('callback_query', (query) => {
   }
 
   // تایید یا رد تراکنش‌های کاربران توسط ادمین
+  // تایید یا رد تراکنش‌های کاربران توسط ادمین
   else if (data.startsWith('approve_')) {
     const parts = data.split('_');
     const targetUserId = parts[1];
-    const pId = parts[2];
+    
+    // ✅ اصلاح باگ: ترکیب کردن تمام بخش‌های بعد از آیدی کاربر برای به دست آوردن pId کامل
+    const pId = parts.slice(2).join('_'); 
     const product = botData.products[pId];
 
     bot.sendMessage(targetUserId, botData.settings.approved, { parse_mode: 'HTML' })
