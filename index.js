@@ -1,328 +1,198 @@
-require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const fs = require('fs');
 
-// ── Validation ──────────────────────────────────────────────────────────────
+// بررسی وجود متغیرهای حیاتی در پنل Railway برای جلوگیری از کرش
 if (!process.env.BOT_TOKEN || !process.env.ADMIN_CHAT_ID) {
-  console.error('❌ BOT_TOKEN یا ADMIN_CHAT_ID تعریف نشده');
+  console.error('❌ خطا: متغیرهای BOT_TOKEN یا ADMIN_CHAT_ID در پنل Railway تعریف نشده‌اند!');
   process.exit(1);
 }
 
-// ── Config ──────────────────────────────────────────────────────────────────
-const TOKEN = process.env.BOT_TOKEN;
-const ADMIN = String(process.env.ADMIN_CHAT_ID);
-const CARD  = '5022291569609694';
-const PRICE = '۲۴۹,۰۰۰';
+const token = process.env.BOT_TOKEN;
+const adminChatId = process.env.ADMIN_CHAT_ID;
+const habitFileId = process.env.HABIT_FILE_ID || null;
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+const bot = new TelegramBot(token, { polling: true });
 
-// ── Database (JSON) ─────────────────────────────────────────────────────────
-// ⚠️ Railway: دیتا روی ریستارت پاک میشه. برای نگهداری دائمی، Railway Volume اضافه کن.
-const DB_FILE = './db.json';
-let db = { users: {}, fileId: process.env.HABIT_FILE_ID || null, approved: 0, rejected: 0 };
-
-const saveDB = () => { try { fs.writeFileSync(DB_FILE, JSON.stringify(db)); } catch {} };
-try { db = { ...db, ...JSON.parse(fs.readFileSync(DB_FILE)) }; } catch {}
-
-// ── State & Anti-Flood ──────────────────────────────────────────────────────
-let adminMode = null; // null | 'broadcast' | 'setfile'
-const floods  = new Map();
-
-const antiFlood = (id) => {
-  if ((floods.get(id) || 0) > Date.now() - 2500) return false;
-  floods.set(id, Date.now());
-  return true;
+// --- مدیریت متن پیام‌ها (Premium Copywriting) ---
+const MESSAGES = {
+  welcome: `<b>سلام رفیق! 👋</b>\n\nبه <b>شیترا</b> خوش اومدی. اینجا قراره با هم کنترل زمان, اهداف و عادت‌هامون رو به دست بگیریم و به منظم‌ترین نسخه خودمون تبدیل بشیم.\n\nاز منوی زیر انتخاب کن چطور می‌تونم تو این مسیر کمکت کنم:`,
+  
+  buyHabit: `<b>🎯 شروع یک تغییر بزرگ (سرمایه‌گذاری روی خودت!)</b>\n\nبا داشتن این هبیت‌ترکر، مسیر رسیدن به اهدافت شفاف‌تر، منظم‌تر و لذت‌بخش‌تر از همیشه میشه. وقتش رسیده که به کارهات نظم بدی. ✨\n\n💳 <b>مبلغ سرمایه‌گذاری:</b> ۲۴۹,۰۰۰ تومان\n🏦 <b>شماره کارت:</b> <code>5022291569609694</code>\n👤 <b>به نام:</b> صالحی\n\n<i>👈 روی شماره کارت ضربه بزن تا به راحتی کپی بشه.</i>\n\nبعد از واریز، کافیه <b>شماره پیگیری، شناسه پرداخت، متن پیامک بانک یا عکس رسید</b> رو همینجا برام بفرستی تا بلافاصله فایل و راهنما برات ارسال بشه. 🚀`,
+  
+  tutorials: `<b>💡 چطور از پلنر استفاده کنم؟ (کلش در ۳ قدم خلاصه میشه: 👇)</b>\n\nاستفاده از شیترا خیلی ساده‌تر از اونیه که فکرش رو می‌کنی! اصلاً نیازی نیست اکسل یا فرمول‌نویسی بلد باشی. همه‌چیز کاملاً آماده و خودکاره، فقط کافیه این ۳ کار رو بکنی:\n\n1️⃣ <b>فایل رو باز می‌کنی</b> (خیلی راحت روی گوشی، تبلت یا لپ‌تاپ)\n2️⃣ <b>عادت‌ها و هدف‌هات رو وارد می‌کنی</b>\n3️⃣ <b>روزانه تیک می‌زنی و پیشرفتت رو تماشا می‌کنی! 📈</b>\n\nبه همین سادگی! تمام نمودارها، محاسبات رشد و تحلیل‌ها رو خودِ فایل به صورت اتوماتیک برات انجام میده. \n\n🎁 <b>راستی خیالت راحت باشه؛</b> یک ویدیو آموزشی فوق‌العاده کوتاه و کاربردی (زیر ۵ دقیقه) هم داخل خود فایل برات گذاشتیم که اگر ثانیه‌ای سوالی داشتی، قدم‌به‌قدم راهنماییت کنه.\n\n🎯 برای دریافت هبیت‌ترکر و شروع تغییر، دکمه زیر رو لمس کن:`,
+  
+  support: `<b>👨‍💻 پشتیبانی شیترا</b>\n\nسوالی داری، نیاز به راهنمایی داری یا در فرآیند پرداخت به مشکلی خوردی؟ با خیال راحت به آیدی زیر پیام بده، همیشه کنارتیم:\n\n🆔 @sheetra_support`,
+  
+  receiptProcessing: `<b>✅ دریافت شد!</b>\n\nاطلاعات یا رسید شما با موفقیت ثبت شد و در صف بررسی قرار گرفت. به محض تایید تراکنش توسط تیم شیترا، فایل هبیت‌ترکر همینجا به صورت خودکار برات ارسال میشه. ممنون از صبوری و اعتمادت! 💙`,
+  
+  purchaseApproved: `<b>🎉 تراکنش شما تایید شد!</b>\n\nممنون از سرمایه‌گذاری ارزشمندی که روی نظم و آینده خودت کردی. در ادامه فایل هبیت‌ترکر به همراه دسترسی‌های لازم برات ارسال میشه. تو مسیر ساخت عادت‌های جدید موفق باشی! 🚀`,
+  
+  purchaseRejected: `<b>❌ عدم تایید تراکنش</b>\n\nمتأسفانه اطلاعات یا رسید ارسالی شما مورد تایید قرار نگرفت. لطفاً شماره پیگیری صحیح را ارسال کنید یا جهت بررسی بیشتر با پشتیبانی در ارتباط باشید:\n🆔 @sheetra_support`
 };
-const isAdmin = (id) => String(id) === ADMIN;
 
-// ── Messages ─────────────────────────────────────────────────────────────────
-const T = {
-  start: (n) =>
-    `سلام ${n} 👋\n\nبه <b>شیترا</b> خوش اومدی.\nاینجا نظم واقعی شروع میشه.\n\n👇`,
-
-  buy:
-    `🎯 <b>هبیت‌ترکر شیترا</b>\n\n` +
-    `✦ ردیابی عادت‌ها و اهداف روزانه\n` +
-    `✦ نمودار پیشرفت خودکار\n` +
-    `✦ روی موبایل، تبلت و لپتاپ\n\n` +
-    `💰 <b>${PRICE} تومان</b>\n` +
-    `🏦 <code>${CARD}</code>\n` +
-    `<i>← روی کارت بزن کپی کن</i>\n\n` +
-    `بعد از پرداخت، رسید یا شناسه تراکنش رو اینجا بفرست 👇`,
-
-  howto:
-    `💡 <b>در ۳ قدم شروع کن</b>\n\n` +
-    `۱. فایل رو باز کن\n` +
-    `۲. عادت‌هاتو وارد کن\n` +
-    `۳. هر روز تیک بزن ✅\n\n` +
-    `نمودارها خودکار آپدیت میشن.\n` +
-    `<i>داخل فایل یه ویدیوی آموزشی کوتاه هم هست.</i>`,
-
-  support:
-    `📞 <b>پشتیبانی</b>\n\n` +
-    `🆔 @sheetra_support\n\n` +
-    `هر سوالی داشتی مستقیم بفرست.`,
-
-  got:     `✅ رسیدت رسید!\nداریم چک می‌کنیم، فایل رو خیلی زود بهت میفرستیم.`,
-  done:    `🎉 <b>پرداختت تایید شد!</b>\n\nممنون از خریدت. فایلت رو دریافت کن 👇`,
-  nope:    `❌ رسید تایید نشد.\nبرای پیگیری: @sheetra_support`,
-  nofile:  `⚠️ فایل هنوز آپلود نشده. با پشتیبانی تماس بگیر:\n@sheetra_support`,
-
-  stats: () => {
-    const users   = Object.values(db.users);
-    const pending = users.filter(u => u.s === 'pending').length;
-    return (
-      `📊 <b>آمار ربات</b>\n\n` +
-      `👥 کاربران: <b>${users.length}</b>\n` +
-      `⏳ در انتظار تایید: <b>${pending}</b>\n` +
-      `✅ تایید شده: <b>${db.approved}</b>\n` +
-      `❌ رد شده: <b>${db.rejected}</b>\n` +
-      `📎 فایل: ${db.fileId ? '✅ تنظیم شده' : '❌ تنظیم نشده'}`
-    );
+// --- دکمه‌های شیشه‌ای منوی اصلی ---
+const KEYBOARDS = {
+  mainMenu: {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🎯 دریافت هبیت ترکر و شروع تغییر', callback_data: 'buy_habit' }],
+        [{ text: '💡 چطور از پلنرها استفاده کنم؟', callback_data: 'tutorials' }],
+        [{ text: '💬 ارتباط مستقیم با پشتیبانی', callback_data: 'support' }]
+      ]
+    }
   },
-
-  help:
-    `🛠 <b>دستورات ادمین</b>\n\n` +
-    `/stats — آمار کلی\n` +
-    `/users — لیست کاربران اخیر\n` +
-    `/setfile — ثبت فایل هبیت‌ترکر\n` +
-    `/broadcast — ارسال پیام به همه\n` +
-    `/cancel — لغو عملیات جاری\n` +
-    `/help — این منو`,
+  redirectToBuy: {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🎯 شروع تغییر (دریافت هبیت ترکر)', callback_data: 'buy_habit' }]
+      ]
+    }
+  }
 };
 
-// ── Keyboards ─────────────────────────────────────────────────────────────────
-const K = {
-  main: { reply_markup: { inline_keyboard: [
-    [{ text: '🎯 دریافت هبیت‌ترکر', callback_data: 'buy' }],
-    [
-      { text: '💡 راهنما', callback_data: 'howto' },
-      { text: '📞 پشتیبانی', callback_data: 'support' },
-    ],
-  ]}},
-
-  toBuy: { reply_markup: { inline_keyboard: [
-    [{ text: '🎯 دریافت هبیت‌ترکر', callback_data: 'buy' }],
-  ]}},
-
-  action: (id) => ({ reply_markup: { inline_keyboard: [[
-    { text: '✅ تایید + ارسال فایل', callback_data: `approve_${id}` },
-    { text: '❌ رد تراکنش',          callback_data: `reject_${id}`  },
-  ]]}}),
-};
-
-// ── Utils ─────────────────────────────────────────────────────────────────────
-const html  = { parse_mode: 'HTML' };
-const send  = (to, text, opts = {}) =>
-  bot.sendMessage(to, text, { ...html, ...opts }).catch(e => console.error('[send]', e.message));
-
-function upsertUser(msg) {
-  const id = String(msg.chat.id);
-  if (!db.users[id]) {
-    db.users[id] = {
-      id,
-      name: (`${msg.from.first_name || ''} ${msg.from.last_name || ''}`).trim() || '—',
-      un:   msg.from.username || null,
-      at:   Date.now(),
-      s:    'new',
-    };
-    saveDB();
-  }
-  return db.users[id];
-}
-
-function buildReceiptNotif(user, chatId, text) {
-  const tag  = `👤 <b>${user.name}</b>${user.un ? ` (@${user.un})` : ''}\n🆔 <code>${chatId}</code>`;
-  const body = text ? `\n\n📝 <i>${text}</i>` : '\n📎 فایل یا عکس';
-  return `🔔 <b>رسید جدید</b>\n\n${tag}${body}`;
-}
-
-async function notifyAdmin(chatId, caption, msg) {
-  const opts = { parse_mode: 'HTML', ...K.action(chatId) };
-  if (msg.photo) {
-    return bot.sendPhoto(ADMIN, msg.photo[msg.photo.length - 1].file_id, { caption, ...opts });
-  } else if (msg.document) {
-    return bot.sendDocument(ADMIN, msg.document.file_id, { caption, ...opts });
-  } else if (msg.video) {
-    return bot.sendVideo(ADMIN, msg.video.file_id, { caption, ...opts });
-  } else {
-    return send(ADMIN, caption, K.action(chatId));
-  }
-}
-
-// ── /start ────────────────────────────────────────────────────────────────────
+// --- دستور /start ---
 bot.onText(/\/start/, (msg) => {
-  if (isAdmin(msg.chat.id)) return send(ADMIN, T.help);
-  const u     = upsertUser(msg);
-  const first = u.name.split(' ')[0];
-  send(msg.chat.id, T.start(first), K.main);
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, MESSAGES.welcome, {
+    parse_mode: 'HTML',
+    ...KEYBOARDS.mainMenu
+  }).catch((err) => console.error('Error welcome:', err.message));
 });
 
-// ── Admin Commands ─────────────────────────────────────────────────────────────
-bot.onText(/\/help/, (msg) => {
-  if (!isAdmin(msg.chat.id)) return;
-  send(ADMIN, T.help);
-});
+// --- مدیریت کلیک روی دکمه‌های منوی اصلی کاربر ---
+bot.on('callback_query', (query) => {
+  const chatId = query.message.chat.id;
+  const data = query.data;
 
-bot.onText(/\/stats/, (msg) => {
-  if (!isAdmin(msg.chat.id)) return;
-  send(ADMIN, T.stats());
-});
-
-bot.onText(/\/cancel/, (msg) => {
-  if (!isAdmin(msg.chat.id)) return;
-  if (adminMode) { adminMode = null; return send(ADMIN, '🚫 عملیات کنسل شد.'); }
-  send(ADMIN, 'عملیات فعالی وجود نداره.');
-});
-
-bot.onText(/\/users/, (msg) => {
-  if (!isAdmin(msg.chat.id)) return;
-  const list = Object.values(db.users)
-    .sort((a, b) => b.at - a.at)
-    .slice(0, 20)
-    .map((u, i) => `${i + 1}. ${u.name} ${u.un ? `@${u.un}` : ''} — <code>${u.id}</code> [${u.s}]`)
-    .join('\n');
-  send(ADMIN, list ? `👥 <b>آخرین کاربران:</b>\n\n${list}` : 'هنوز کاربری ثبت نشده.');
-});
-
-// /setfile [file_id] یا بدون آرگومان → فایل بعدی رو ثبت می‌کنه
-bot.onText(/\/setfile(?:\s+(.+))?/, (msg, match) => {
-  if (!isAdmin(msg.chat.id)) return;
-  if (match[1]) {
-    db.fileId = match[1].trim();
-    saveDB();
-    return send(ADMIN, `✅ File ID ثبت شد:\n<code>${db.fileId}</code>`);
-  }
-  adminMode = 'setfile';
-  send(ADMIN, '📎 الان فایل هبیت‌ترکر رو اینجا بفرست.');
-});
-
-// /broadcast → پیام بعدی (متن، عکس یا فایل) به همه کاربران ارسال میشه
-bot.onText(/\/broadcast/, (msg) => {
-  if (!isAdmin(msg.chat.id)) return;
-  adminMode = 'broadcast';
-  send(ADMIN, '📢 پیامت رو بفرست (متن، عکس یا فایل).\n\n/cancel برای انصراف.');
-});
-
-// ── Callbacks ─────────────────────────────────────────────────────────────────
-bot.on('callback_query', async (q) => {
-  const chatId = String(q.message.chat.id);
-  const data   = q.data;
-
+  // مدیریت دکمه‌های بخش مدیریت (ادمین)
   if (data.startsWith('approve_') || data.startsWith('reject_')) {
-    bot.answerCallbackQuery(q.id, { text: '✓ اجرا شد' }).catch(() => {});
-    return adminAction(q, data.startsWith('approve_'));
-  }
-
-  bot.answerCallbackQuery(q.id).catch(() => {});
-  if (!antiFlood(chatId)) return;
-
-  switch (data) {
-    case 'buy':     return send(chatId, T.buy);
-    case 'howto':   return send(chatId, T.howto, K.toBuy);
-    case 'support': return send(chatId, T.support);
-  }
-});
-
-// ── Message Handler ────────────────────────────────────────────────────────────
-bot.on('message', async (msg) => {
-  const chatId = String(msg.chat.id);
-  const text   = msg.text || '';
-
-  if (text.startsWith('/')) return; // دستورات رو bot.onText مدیریت می‌کنه
-
-  // ── پیام‌های ادمین ──────────────────────────────────────────────────────────
-  if (isAdmin(chatId)) {
-
-    // ثبت فایل هبیت‌ترکر
-    if (adminMode === 'setfile' && msg.document) {
-      db.fileId = msg.document.file_id;
-      adminMode = null;
-      saveDB();
-      return send(ADMIN, `✅ فایل ثبت شد!\n<code>${db.fileId}</code>`);
-    }
-
-    // ارسال بردکست
-    if (adminMode === 'broadcast') {
-      adminMode     = null;
-      const users   = Object.values(db.users);
-      if (!users.length) return send(ADMIN, '⚠️ هنوز کاربری ثبت نشده.');
-
-      send(ADMIN, `📤 در حال ارسال به ${users.length} نفر...`);
-      let ok = 0, fail = 0;
-
-      for (const u of users) {
-        try {
-          if (msg.photo) {
-            await bot.sendPhoto(u.id, msg.photo[msg.photo.length - 1].file_id, { caption: msg.caption || '', ...html });
-          } else if (msg.document) {
-            await bot.sendDocument(u.id, msg.document.file_id, { caption: msg.caption || '', ...html });
-          } else if (msg.video) {
-            await bot.sendVideo(u.id, msg.video.file_id, { caption: msg.caption || '', ...html });
-          } else {
-            await bot.sendMessage(u.id, text, html);
-          }
-          ok++;
-        } catch { fail++; }
-        await new Promise(r => setTimeout(r, 50)); // rate-limit تلگرام
-      }
-
-      return send(ADMIN, `✅ ارسال تموم شد\n\n✔️ موفق: ${ok}  |  ❌ خطا: ${fail}`);
-    }
-
-    // اگر ادمین فایل فرستاد بدون /setfile → File ID رو نشون بده
-    if (msg.document) {
-      send(ADMIN, `📎 <b>File ID:</b>\n<code>${msg.document.file_id}</code>\n\nبرای ثبت: /setfile`);
-    }
+    handleAdminCallback(query);
     return;
   }
 
-  // ── پیام کاربر (رسید) ──────────────────────────────────────────────────────
-  if (!antiFlood(chatId)) return;
-
-  const user = upsertUser(msg);
-  if (user.s === 'new') { user.s = 'pending'; saveDB(); }
-
-  send(chatId, T.got);
-
-  const caption = buildReceiptNotif(user, chatId, text);
-  notifyAdmin(chatId, caption, msg).catch(e => console.error('[notify]', e.message));
+  // دکمه‌های معمولی کاربر
+  switch (data) {
+    case 'buy_habit':
+      bot.sendMessage(chatId, MESSAGES.buyHabit, { parse_mode: 'HTML' });
+      break;
+    case 'tutorials':
+      bot.sendMessage(chatId, MESSAGES.tutorials, { 
+        parse_mode: 'HTML',
+        ...KEYBOARDS.redirectToBuy
+      });
+      break;
+    case 'support':
+      bot.sendMessage(chatId, MESSAGES.support, { parse_mode: 'HTML' });
+      break;
+  }
+  
+  bot.answerCallbackQuery(query.id).catch((err) => console.error(err.message));
 });
 
-// ── Admin Action (تایید/رد) ───────────────────────────────────────────────────
-async function adminAction(q, isApprove) {
-  const userId = q.data.split('_')[1];
-  const msgId  = q.message.message_id;
-  const label  = isApprove ? '✅ تایید شد.' : '❌ رد شد.';
+// --- دریافت رسید (با هر فرمتی: متن آزاد، اس‌ام‌اس، عکس یا فایل) و ارجاع به ادمین ---
+bot.on('message', (msg) => {
+  const chatId = msg.chat.id;
+  const userText = msg.text;
+  const username = msg.from.username ? `@${msg.from.username}` : 'بدون آیدی';
+  const fullName = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim();
 
-  // ویرایش پیام ادمین
-  const hasCaption = q.message.caption !== undefined;
-  (hasCaption ? bot.editMessageCaption : bot.editMessageText)
-    .call(bot, label, { chat_id: ADMIN, message_id: msgId })
-    .catch(() => {});
-
-  if (isApprove) {
-    await send(userId, T.done);
-    if (db.fileId) {
-      bot.sendDocument(userId, db.fileId, { caption: '🎁 هبیت‌ترکر شیترا' })
-        .catch(e => console.error('[sendDoc]', e.message));
-    } else {
-      send(userId, T.nofile);
+  // ۱. اگر پیام دستور تلگرامی بود، نادیده بگیر
+  if (userText && userText.startsWith('/')) return;
+  
+  // ۲. اگر پیام از طرف خود ادمین بود
+  if (String(chatId) === String(adminChatId)) {
+    if (msg.document) {
+      console.log(`📌 File ID شناسایی شد: ${msg.document.file_id}`);
     }
-    if (db.users[userId]) db.users[userId].s = 'approved';
-    db.approved++;
-
-  } else {
-    send(userId, T.nope);
-    if (db.users[userId]) db.users[userId].s = 'rejected';
-    db.rejected++;
+    return; 
   }
 
-  saveDB();
+  // ۳. ارسال پیام تایید به کاربر
+  bot.sendMessage(chatId, MESSAGES.receiptProcessing, { parse_mode: 'HTML' });
+
+  // دکمه‌های تایید و رد اختصاصی برای ادمین
+  const adminKeyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '✅ تایید و ارسال فایل', callback_data: `approve_${chatId}` },
+          { text: '❌ رد تراکنش', callback_data: `reject_${chatId}` }
+        ]
+      ]
+    }
+  };
+
+  const baseReportText = `🔔 <b>رسید یا پیام جدید پرداخت!</b>\n\n👤 <b>کاربر:</b> ${fullName} (${username})\n🆔 <b>شناسه کاربر:</b> <code>${chatId}</code>`;
+  const textDetails = userText ? `\n📝 <b>متن ارسال شده:</b>\n<code>${userText}</code>` : '\n📝 <b>نوع رسید:</b> عکس یا فایل رسانه‌ای';
+  const adminReportText = baseReportText + textDetails;
+
+  // ۴. ارسال هوشمند به ادمین بر اساس فرمت ارسالی مشتری
+  if (msg.photo) {
+    const photoId = msg.photo[msg.photo.length - 1].file_id;
+    bot.sendPhoto(adminChatId, photoId, {
+      caption: adminReportText,
+      parse_mode: 'HTML',
+      ...adminKeyboard
+    }).catch((err) => console.error('Error photo:', err.message));
+
+  } else if (msg.document) {
+    bot.sendDocument(adminChatId, msg.document.file_id, {
+      caption: adminReportText,
+      parse_mode: 'HTML',
+      ...adminKeyboard
+    }).catch((err) => console.error('Error document:', err.message));
+
+  } else {
+    bot.sendMessage(adminChatId, adminReportText, {
+      parse_mode: 'HTML',
+      ...adminKeyboard
+    }).catch((err) => console.error('Error text:', err.message));
+  }
+});
+
+// --- مدیریت کلیک ادمین روی دکمه‌های تایید یا رد ---
+function handleAdminCallback(query) {
+  const adminAction = query.data;
+  const [action, targetUserId] = adminAction.split('_');
+  
+  if (action === 'approve') {
+    bot.sendMessage(targetUserId, MESSAGES.purchaseApproved, { parse_mode: 'HTML' })
+      .then(() => {
+        if (habitFileId && habitFileId !== '123') {
+          bot.sendDocument(targetUserId, habitFileId, { caption: '🎁 فایل هبیت‌ترکر شیترا' });
+        } else {
+          bot.sendMessage(targetUserId, `⚠️ فایل هبیت‌ترکر هنوز روی سیستم پیکربندی نشده است. لطفا به پشتیبانی پیام دهید.`);
+        }
+      });
+
+    bot.editMessageCaption(`✅ این رسید تایید شد و فایل برای کاربر ارسال گردید.`, {
+      chat_id: adminChatId,
+      message_id: query.message.message_id
+    }).catch(() => {
+      bot.editMessageText(`✅ این رسید تایید شد و فایل برای کاربر ارسال گردید.`, {
+        chat_id: adminChatId,
+        message_id: query.message.message_id
+      });
+    });
+
+  } else if (action === 'reject') {
+    bot.sendMessage(targetUserId, MESSAGES.purchaseRejected, { parse_mode: 'HTML' });
+
+    bot.editMessageCaption(`❌ این تراکنش توسط شما رد شد.`, {
+      chat_id: adminChatId,
+      message_id: query.message.message_id
+    }).catch(() => {
+      bot.editMessageText(`❌ این تراکنش توسط شما رد شد.`, {
+        chat_id: adminChatId,
+        message_id: query.message.message_id
+      });
+    });
+  }
+
+  bot.answerCallbackQuery(query.id, { text: 'دستور اجرا شد' });
 }
 
-// ── Errors ────────────────────────────────────────────────────────────────────
-bot.on('polling_error', e => console.error('[poll]', e.message));
-bot.on('error',         e => console.error('[bot]',  e.message));
+// --- خطایابی شبکه ---
+bot.on('polling_error', (err) => console.warn(`[Polling Error]: ${err.message}`));
+bot.on('error', (err) => console.error(`[Bot Error]: ${err.message}`));
 
-console.log('🚀 شیترا آنلاین شد.');
+console.log('🤖 ربات شیترا با موفقیت روی Railway راه‌اندازی شد...');
