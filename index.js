@@ -1,198 +1,495 @@
 const TelegramBot = require('node-telegram-bot-api');
+const fs = require('fs');
+const path = require('path');
 
-// بررسی وجود متغیرهای حیاتی در پنل Railway برای جلوگیری از کرش
+// بررسی متغیرهای حیاتی محیطی
 if (!process.env.BOT_TOKEN || !process.env.ADMIN_CHAT_ID) {
-  console.error('❌ خطا: متغیرهای BOT_TOKEN یا ADMIN_CHAT_ID در پنل Railway تعریف نشده‌اند!');
+  console.error('❌ خطا: متغیرهای BOT_TOKEN یا ADMIN_CHAT_ID تعریف نشده‌اند!');
   process.exit(1);
 }
 
 const token = process.env.BOT_TOKEN;
-const adminChatId = process.env.ADMIN_CHAT_ID;
-const habitFileId = process.env.HABIT_FILE_ID || null;
-
+const adminChatId = String(process.env.ADMIN_CHAT_ID);
 const bot = new TelegramBot(token, { polling: true });
 
-// --- مدیریت متن پیام‌ها (Premium Copywriting) ---
-const MESSAGES = {
-  welcome: `<b>سلام رفیق! 👋</b>\n\nبه <b>شیترا</b> خوش اومدی. اینجا قراره با هم کنترل زمان, اهداف و عادت‌هامون رو به دست بگیریم و به منظم‌ترین نسخه خودمون تبدیل بشیم.\n\nاز منوی زیر انتخاب کن چطور می‌تونم تو این مسیر کمکت کنم:`,
-  
-  buyHabit: `<b>🎯 شروع یک تغییر بزرگ (سرمایه‌گذاری روی خودت!)</b>\n\nبا داشتن این هبیت‌ترکر، مسیر رسیدن به اهدافت شفاف‌تر، منظم‌تر و لذت‌بخش‌تر از همیشه میشه. وقتش رسیده که به کارهات نظم بدی. ✨\n\n💳 <b>مبلغ سرمایه‌گذاری:</b> ۲۴۹,۰۰۰ تومان\n🏦 <b>شماره کارت:</b> <code>5022291569609694</code>\n👤 <b>به نام:</b> صالحی\n\n<i>👈 روی شماره کارت ضربه بزن تا به راحتی کپی بشه.</i>\n\nبعد از واریز، کافیه <b>شماره پیگیری، شناسه پرداخت، متن پیامک بانک یا عکس رسید</b> رو همینجا برام بفرستی تا بلافاصله فایل و راهنما برات ارسال بشه. 🚀`,
-  
-  tutorials: `<b>💡 چطور از پلنر استفاده کنم؟ (کلش در ۳ قدم خلاصه میشه: 👇)</b>\n\nاستفاده از شیترا خیلی ساده‌تر از اونیه که فکرش رو می‌کنی! اصلاً نیازی نیست اکسل یا فرمول‌نویسی بلد باشی. همه‌چیز کاملاً آماده و خودکاره، فقط کافیه این ۳ کار رو بکنی:\n\n1️⃣ <b>فایل رو باز می‌کنی</b> (خیلی راحت روی گوشی، تبلت یا لپ‌تاپ)\n2️⃣ <b>عادت‌ها و هدف‌هات رو وارد می‌کنی</b>\n3️⃣ <b>روزانه تیک می‌زنی و پیشرفتت رو تماشا می‌کنی! 📈</b>\n\nبه همین سادگی! تمام نمودارها، محاسبات رشد و تحلیل‌ها رو خودِ فایل به صورت اتوماتیک برات انجام میده. \n\n🎁 <b>راستی خیالت راحت باشه؛</b> یک ویدیو آموزشی فوق‌العاده کوتاه و کاربردی (زیر ۵ دقیقه) هم داخل خود فایل برات گذاشتیم که اگر ثانیه‌ای سوالی داشتی، قدم‌به‌قدم راهنماییت کنه.\n\n🎯 برای دریافت هبیت‌ترکر و شروع تغییر، دکمه زیر رو لمس کن:`,
-  
-  support: `<b>👨‍💻 پشتیبانی شیترا</b>\n\nسوالی داری، نیاز به راهنمایی داری یا در فرآیند پرداخت به مشکلی خوردی؟ با خیال راحت به آیدی زیر پیام بده، همیشه کنارتیم:\n\n🆔 @sheetra_support`,
-  
-  receiptProcessing: `<b>✅ دریافت شد!</b>\n\nاطلاعات یا رسید شما با موفقیت ثبت شد و در صف بررسی قرار گرفت. به محض تایید تراکنش توسط تیم شیترا، فایل هبیت‌ترکر همینجا به صورت خودکار برات ارسال میشه. ممنون از صبوری و اعتمادت! 💙`,
-  
-  purchaseApproved: `<b>🎉 تراکنش شما تایید شد!</b>\n\nممنون از سرمایه‌گذاری ارزشمندی که روی نظم و آینده خودت کردی. در ادامه فایل هبیت‌ترکر به همراه دسترسی‌های لازم برات ارسال میشه. تو مسیر ساخت عادت‌های جدید موفق باشی! 🚀`,
-  
-  purchaseRejected: `<b>❌ عدم تایید تراکنش</b>\n\nمتأسفانه اطلاعات یا رسید ارسالی شما مورد تایید قرار نگرفت. لطفاً شماره پیگیری صحیح را ارسال کنید یا جهت بررسی بیشتر با پشتیبانی در ارتباط باشید:\n🆔 @sheetra_support`
-};
+const DATA_PATH = path.join(__dirname, 'data.json');
 
-// --- دکمه‌های شیشه‌ای منوی اصلی ---
-const KEYBOARDS = {
-  mainMenu: {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '🎯 دریافت هبیت ترکر و شروع تغییر', callback_data: 'buy_habit' }],
-        [{ text: '💡 چطور از پلنرها استفاده کنم؟', callback_data: 'tutorials' }],
-        [{ text: '💬 ارتباط مستقیم با پشتیبانی', callback_data: 'support' }]
-      ]
-    }
-  },
-  redirectToBuy: {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '🎯 شروع تغییر (دریافت هبیت ترکر)', callback_data: 'buy_habit' }]
-      ]
-    }
+// ساختار داده‌های پیش‌فرض ربات
+let botData = {
+  products: {},
+  settings: {
+    cardNo: "5022291569609694",
+    cardName: "صالحی",
+    welcome: "<b>سلام {name} عزیز 🌹</b>\n\nبه <b>شیترا</b> خوش آمدید. ما به شما کمک می‌کنیم تا با ابزارهای هوشمند، مدیریت زمان، اهداف و عادت‌های خود را به دست بگیرید.\n\nلطفاً از منوی زیر مسیر خود را انتخاب کنید:",
+    tutorials: "<b>💡 راهنمای استفاده از پلنرها</b>\n\nاستفاده از قالب‌های شیترا بسیار ساده است و نیازی به دانش فرمول‌نویسی ندارد:\n\n1️⃣ <b>دسترسی سریع:</b> فایل را روی موبایل، تبلت یا لپ‌تاپ باز کنید.\n2️⃣ <b>شخصی‌سازی:</b> اهداف و عادت‌های خود را وارد کنید.\n3️⃣ <b>رشد مستمر:</b> روزانه عملکرد خود را تیک بزنید تا نمودارهای تحلیلی و پیشرفت شما خودکار رسم شوند.\n\n🎥 یک ویدیو آموزشی کوتاه (زیر ۵ دقیقه) نیز همراه فایل‌ها ارسال می‌شود.",
+    support: "<b>💬 پشتیبانی و ارتباط مستقیم</b>\n\nسوالی دارید یا نیازمند راهنمایی هستید؟ تیم پشتیبانی شیترا در کنار شماست:\n\n🆔 @sheetra_support",
+    approved: "<b>🎉 پرداخت شما تایید شد!</b>\n\nممنون از اعتمادتان و سرمایه‌گذاری ارزشمندی که برای نظم شخصی خود انجام دادید. فایل محصول در ادامه برای شما ارسال می‌شود. موفق باشید! 🚀",
+    rejected: "<b>❌ عدم تایید تراکنش</b>\n\nمتأسفانه رسید یا اطلاعات ارسالی شما مورد تایید قرار نگرفت. لطفاً رسید صحیح را ارسال کنید یا با پشتیبانی در ارتباط باشید:\n🆔 @sheetra_support"
   }
 };
+
+// بارگذاری داده‌ها از فایل
+if (fs.existsSync(DATA_PATH)) {
+  try {
+    botData = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+  } catch (e) {
+    console.error("Error reading data.json, using defaults", e);
+  }
+}
+
+// ذخیره داده‌ها
+function saveData() {
+  fs.writeFileSync(DATA_PATH, JSON.stringify(botData, null, 2), 'utf8');
+}
+
+// مدیریت وضعیت ادمین (State Machine)
+const adminStates = {};
+
+// کیبوردهای ثابت ادمین
+const ADMIN_KEYBOARD = {
+  reply_markup: {
+    keyboard: [
+      [{ text: '📦 مدیریت محصولات' }, { text: '📝 ویرایش متن‌های ربات' }],
+      [{ text: '💳 تنظیمات کارت بانکی' }, { text: '❌ خروج از پنل' }]
+    ],
+    resize_keyboard: true
+  }
+};
+
+// --- منوهای اصلی کاربر ---
+function getMainMenu(firstName) {
+  const welcomeText = botData.settings.welcome.replace('{name}', firstName || 'کاربر');
+  const keyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📚 مشاهده و دریافت پلنرها', callback_markup: {}, callback_data: 'user_products' }],
+        [{ text: '💡 راهنمای استفاده', callback_data: 'user_tutorials' }, { text: '💬 پشتیبانی', callback_data: 'user_support' }]
+      ]
+    }
+  };
+  return { text: welcomeText, keyboard };
+}
 
 // --- دستور /start ---
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  bot.sendMessage(chatId, MESSAGES.welcome, {
-    parse_mode: 'HTML',
-    ...KEYBOARDS.mainMenu
-  }).catch((err) => console.error('Error welcome:', err.message));
+  // اگر کاربر ادمین بود، دکمه ورود به پنل ادمین را هم نشان بده
+  if (String(chatId) === adminChatId) {
+    bot.sendMessage(chatId, `🛠 <b>به پنل مدیریت شیترا خوش آمدید.</b>\nجهت استفاده از ابزارهای مدیریت، از نوار ابزار دکمه‌های زیر استفاده کنید.`, {
+      parse_mode: 'HTML',
+      ...ADMIN_KEYBOARD
+    });
+  }
+  
+  const menu = getMainMenu(msg.from.first_name);
+  bot.sendMessage(chatId, menu.text, { parse_mode: 'HTML', ...menu.keyboard })
+    .catch((err) => console.error(err.message));
 });
 
-// --- مدیریت کلیک روی دکمه‌های منوی اصلی کاربر ---
-bot.on('callback_query', (query) => {
-  const chatId = query.message.chat.id;
-  const data = query.data;
+// --- دستور ورود به پنل ادمین ---
+bot.onText(/\/admin/, (msg) => {
+  const chatId = msg.chat.id;
+  if (String(chatId) !== adminChatId) return;
+  
+  bot.sendMessage(chatId, '🛠 نوار ابزار مدیریت ادمین فعال شد:', ADMIN_KEYBOARD);
+});
 
-  // مدیریت دکمه‌های بخش مدیریت (ادمین)
-  if (data.startsWith('approve_') || data.startsWith('reject_')) {
-    handleAdminCallback(query);
+// --- مدیریت پیام‌های متنی و منطق ادمین ---
+bot.on('message', (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text;
+  const userIdStr = String(chatId);
+
+  // صرف نظر از دستورات اصلی
+  if (text && text.startsWith('/')) return;
+
+  // منطق بخش کاربری (دریافت رسید)
+  if (userIdStr !== adminChatId) {
+    handleUserReceipt(msg);
     return;
   }
 
-  // دکمه‌های معمولی کاربر
-  switch (data) {
-    case 'buy_habit':
-      bot.sendMessage(chatId, MESSAGES.buyHabit, { parse_mode: 'HTML' });
+  // --- جریان ادمین (پیام‌های دریافتی از ادمین) ---
+  if (adminStates[chatId]) {
+    handleAdminWorkflow(msg);
+    return;
+  }
+
+  // ناوبری منوی اصلی ادمین
+  switch (text) {
+    case '📦 مدیریت محصولات':
+      showAdminProductsMenu(chatId);
       break;
-    case 'tutorials':
-      bot.sendMessage(chatId, MESSAGES.tutorials, { 
-        parse_mode: 'HTML',
-        ...KEYBOARDS.redirectToBuy
+    case '📝 ویرایش متن‌های ربات':
+      showAdminSettingsMenu(chatId);
+      break;
+    case '💳 تنظیمات کارت بانکی':
+      adminStates[chatId] = { type: 'EDIT_CARD_NO' };
+      bot.sendMessage(chatId, `💳 شماره کارت فعلی: <code>${botData.settings.cardNo}</code>\n\nشماره کارت جدید ۱۶ رقمی را بفرستید:`, { parse_mode: 'HTML' });
+      break;
+    case '❌ خروج از پنل':
+      bot.sendMessage(chatId, '⚙️ پنل مدیریت بسته شد. برای باز کردن مجدد /admin را بفرستید.', {
+        reply_markup: { remove_keyboard: true }
       });
       break;
-    case 'support':
-      bot.sendMessage(chatId, MESSAGES.support, { parse_mode: 'HTML' });
-      break;
   }
-  
-  bot.answerCallbackQuery(query.id).catch((err) => console.error(err.message));
 });
 
-// --- دریافت رسید (با هر فرمتی: متن آزاد، اس‌ام‌اس، عکس یا فایل) و ارجاع به ادمین ---
-bot.on('message', (msg) => {
+// --- مدیریت کلیک روی دکمه‌های شیشه‌ای (Callback Queries) ---
+bot.on('callback_query', (query) => {
+  const chatId = query.message.chat.id;
+  const data = query.data;
+  const msgId = query.message.message_id;
+
+  bot.answerCallbackQuery(query.id).catch(() => {});
+
+  // دکمه‌های بخش کاربری
+  if (data === 'user_products') {
+    const pKeys = Object.keys(botData.products);
+    if (pKeys.length === 0) {
+      bot.sendMessage(chatId, '⚠️ در حال حاضر محصولی برای نمایش وجود ندارد.');
+      return;
+    }
+    const inline_keyboard = pKeys.map(id => ([{ text: `🎯 ${botData.products[id].name}`, callback_data: `view_p_${id}` }]));
+    inline_keyboard.push([{ text: '🔙 بازگشت به منوی اصلی', callback_data: 'back_to_main' }]);
+    
+    bot.editMessageText('📚 <b>لیست پلنرها و محصولات شیترا:</b>\n\nمحصول مورد نظر خود را جهت مشاهده جزئیات انتخاب کنید:', {
+      chat_id: chatId,
+      message_id: msgId,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard }
+    }).catch(() => {});
+  }
+  
+  else if (data === 'back_to_main') {
+    const menu = getMainMenu(query.from.first_name);
+    bot.editMessageText(menu.text, {
+      chat_id: chatId,
+      message_id: msgId,
+      parse_mode: 'HTML',
+      reply_markup: menu.keyboard.reply_markup
+    }).catch(() => {});
+  }
+
+  else if (data === 'user_tutorials') {
+    bot.sendMessage(chatId, botData.settings.tutorials, { parse_mode: 'HTML' });
+  }
+
+  else if (data === 'user_support') {
+    bot.sendMessage(chatId, botData.settings.support, { parse_mode: 'HTML' });
+  }
+
+  else if (data.startsWith('view_p_')) {
+    const pId = data.replace('view_p_', '');
+    const product = botData.products[pId];
+    if (!product) return;
+
+    const infoText = `<b>🎯 ${product.name}</b>\n\n${product.description}\n\n💳 <b>مبلغ سرمایه‌گذاری:</b> ${product.price} تومان\n🏦 <b>شماره کارت:</b> <code>${botData.settings.cardNo}</code>\n👤 <b>به نام:</b> ${botData.settings.cardName}\n\n<i>👈 روی شماره کارت ضربه بزنید تا کپی شود.</i>\n\nپس از واریز، <b>رسید پرداخت، اسکرین‌شات یا مشخصات تراکنش</b> را همین‌جا ارسال کنید تا به صورت خودکار فایل برای شما ارسال شود. ✨`;
+
+    if (product.photoId) {
+      bot.sendPhoto(chatId, product.photoId, { caption: infoText, parse_mode: 'HTML' });
+    } else {
+      bot.sendMessage(chatId, infoText, { parse_mode: 'HTML' });
+    }
+  }
+
+  // --- دکمه‌های بخش مدیریت و ادمین ---
+  if (String(chatId) !== adminChatId) return;
+
+  if (data.startsWith('adm_del_')) {
+    const pId = data.replace('adm_del_', '');
+    delete botData.products[pId];
+    saveData();
+    bot.sendMessage(chatId, '✅ محصول با موفقیت حذف شد.');
+    showAdminProductsMenu(chatId);
+  }
+
+  else if (data.startsWith('adm_edit_')) {
+    const pId = data.replace('adm_edit_', '');
+    adminStates[chatId] = { type: 'EDIT_PRODUCT_NAME', pId };
+    bot.sendMessage(chatId, `✍️ نام جدید محصول را ارسال کنید:`);
+  }
+
+  else if (data === 'adm_add_product') {
+    adminStates[chatId] = { type: 'ADD_PRODUCT_NAME' };
+    bot.sendMessage(chatId, '🆕 <b>مراحل افزودن محصول جدید</b>\n\nلطفاً <b>نام محصول</b> را ارسال کنید:');
+  }
+
+  else if (data.startsWith('set_text_')) {
+    const settingKey = data.replace('set_text_', '');
+    adminStates[chatId] = { type: 'EDIT_SETTING_TEXT', key: settingKey };
+    bot.sendMessage(chatId, `✍️ متن جدید مربوط به این بخش را ارسال کنید. (شما می‌توانید از تگ‌های HTML استفاده کنید. در متن خوش‌آمدگویی عبارت <code>{name}</code> با اسم کاربر جایگزین می‌شود):\n\nمتن فعلی:\n${botData.settings[settingKey]}`);
+  }
+
+  // تایید یا رد تراکنش‌های کاربران توسط ادمین
+  else if (data.startsWith('approve_')) {
+    const parts = data.split('_');
+    const targetUserId = parts[1];
+    const pId = parts[2];
+    const product = botData.products[pId];
+
+    bot.sendMessage(targetUserId, botData.settings.approved, { parse_mode: 'HTML' })
+      .then(() => {
+        if (product && product.fileId) {
+          bot.sendDocument(targetUserId, product.fileId, { caption: `🎁 فایل محصول: ${product.name}` });
+        } else {
+          bot.sendMessage(targetUserId, `⚠️ فایل این محصول توسط ادمین آپلود نشده است. لطفا با پشتیبانی در ارتباط باشید.`);
+        }
+      });
+
+    bot.editMessageCaption(query.message.caption + `\n\n✅ <b>تراکنش تایید و محصول ارسال شد.</b>`, {
+      chat_id: adminChatId,
+      message_id: msgId,
+      parse_mode: 'HTML'
+    }).catch(() => {
+      bot.editMessageText(query.message.text + `\n\n✅ <b>تراکنش تایید و محصول ارسال شد.</b>`, {
+        chat_id: adminChatId,
+        message_id: msgId,
+        parse_mode: 'HTML'
+      });
+    });
+  }
+
+  else if (data.startsWith('reject_')) {
+    const parts = data.split('_');
+    const targetUserId = parts[1];
+    bot.sendMessage(targetUserId, botData.settings.rejected, { parse_mode: 'HTML' });
+
+    bot.editMessageCaption(query.message.caption + `\n\n❌ <b>تراکنش رد شد.</b>`, {
+      chat_id: adminChatId,
+      message_id: msgId,
+      parse_mode: 'HTML'
+    }).catch(() => {
+      bot.editMessageText(query.message.text + `\n\n❌ <b>تراکنش رد شد.</b>`, {
+        chat_id: adminChatId,
+        message_id: msgId,
+        parse_mode: 'HTML'
+      });
+    });
+  }
+});
+
+// --- مدیریت منوهای ادمین ---
+function showAdminProductsMenu(chatId) {
+  const pKeys = Object.keys(botData.products);
+  let msgText = '📦 <b>مدیریت محصولات شیترا</b>\n\n';
+  const inline_keyboard = [];
+
+  if (pKeys.length === 0) {
+    msgText += 'هیچ محصولی تعریف نشده است.';
+  } else {
+    pKeys.forEach(id => {
+      const p = botData.products[id];
+      msgText += `🔹 <b>${p.name}</b> - قیمت: ${p.price} تومان\n`;
+      inline_keyboard.push([
+        { text: `✏️ ویرایش ${p.name}`, callback_data: `adm_edit_${id}` },
+        { text: `🗑 حذف`, callback_data: `adm_del_${id}` }
+      ]);
+    });
+  }
+
+  inline_keyboard.push([{ text: '➕ افزودن محصول جدید', callback_data: 'adm_add_product' }]);
+
+  bot.sendMessage(chatId, msgText, {
+    parse_mode: 'HTML',
+    reply_markup: { inline_keyboard }
+  });
+}
+
+function showAdminSettingsMenu(chatId) {
+  const inline_keyboard = [
+    [{ text: '👋 متن خوش‌آمدگویی (/start)', callback_data: 'set_text_welcome' }],
+    [{ text: '💡 متن راهنما', callback_data: 'set_text_tutorials' }],
+    [{ text: '💬 متن پشتیبانی', callback_data: 'set_text_support' }],
+    [{ text: '✅ متن تایید پرداخت', callback_data: 'set_text_approved' }],
+    [{ text: '❌ متن رد پرداخت', callback_data: 'set_text_rejected' }]
+  ];
+
+  bot.sendMessage(chatId, '📝 <b>تنظیمات متون ربات</b>\nبخش مورد نظر خود را جهت ویرایش انتخاب کنید:', {
+    parse_mode: 'HTML',
+    reply_markup: { inline_keyboard }
+  });
+}
+
+// --- ماشین وضعیت فرآیندهای ادمین ---
+function handleAdminWorkflow(msg) {
+  const chatId = msg.chat.id;
+  const state = adminStates[chatId];
+  const text = msg.text;
+
+  switch (state.type) {
+    // افزودن محصول جدید
+    case 'ADD_PRODUCT_NAME':
+      adminStates[chatId] = { type: 'ADD_PRODUCT_PRICE', name: text };
+      bot.sendMessage(chatId, `💰 قیمت محصول <b>${text}</b> را به «تومان» وارد کنید (مثال: 249000):`, { parse_mode: 'HTML' });
+      break;
+
+    case 'ADD_PRODUCT_PRICE':
+      adminStates[chatId] = { ...state, type: 'ADD_PRODUCT_DESC', price: text };
+      bot.sendMessage(chatId, `✍️ توضیحات و ویژگی‌های محصول را ارسال کنید:`);
+      break;
+
+    case 'ADD_PRODUCT_DESC':
+      adminStates[chatId] = { ...state, type: 'ADD_PRODUCT_PHOTO', description: text };
+      bot.sendMessage(chatId, `📸 یک <b>عکس</b> برای محصول ارسال کنید. (اگر مایل به گذاشتن عکس نیستید دستور /skip را بفرستید):`, { parse_mode: 'HTML' });
+      break;
+
+    case 'ADD_PRODUCT_PHOTO':
+      if (msg.photo) {
+        state.photoId = msg.photo[msg.photo.length - 1].file_id;
+      }
+      adminStates[chatId] = { ...state, type: 'ADD_PRODUCT_FILE' };
+      bot.sendMessage(chatId, `📁 عالیه! حالا <b>فایل اصلی محصول</b> (مانند Zip, Excel و...) را ارسال کنید تا سیستم پس از خرید خودکار برای کاربر بفرستد:`);
+      break;
+
+    case 'ADD_PRODUCT_FILE':
+      if (!msg.document) {
+        bot.sendMessage(chatId, `⚠️ لطفا فایل محصول را به صورت Document یا فایل ارسال کنید:`);
+        return;
+      }
+      const newId = 'p_' + Date.now();
+      botData.products[newId] = {
+        name: state.name,
+        price: state.price,
+        description: state.description,
+        photoId: state.photoId || null,
+        fileId: msg.document.file_id
+      };
+      saveData();
+      delete adminStates[chatId];
+      bot.sendMessage(chatId, '🎉 محصول جدید با موفقیت اضافه شد و به منو پیوست شد!');
+      showAdminProductsMenu(chatId);
+      break;
+
+    // ویرایش محصول موجود
+    case 'EDIT_PRODUCT_NAME':
+      adminStates[chatId] = { type: 'EDIT_PRODUCT_PRICE', pId: state.pId, name: text };
+      bot.sendMessage(chatId, `💰 قیمت جدید را به «تومان» وارد کنید:`);
+      break;
+
+    case 'EDIT_PRODUCT_PRICE':
+      adminStates[chatId] = { ...state, type: 'EDIT_PRODUCT_DESC', price: text };
+      bot.sendMessage(chatId, `✍️ توضیحات جدید را ارسال کنید:`);
+      break;
+
+    case 'EDIT_PRODUCT_DESC':
+      adminStates[chatId] = { ...state, type: 'EDIT_PRODUCT_PHOTO', description: text };
+      bot.sendMessage(chatId, `📸 عکس جدید را ارسال کنید (یا برای عدم تغییر عکس /skip بفرستید):`);
+      break;
+
+    case 'EDIT_PRODUCT_PHOTO':
+      if (msg.photo) {
+        state.photoId = msg.photo[msg.photo.length - 1].file_id;
+      }
+      adminStates[chatId] = { ...state, type: 'EDIT_PRODUCT_FILE' };
+      bot.sendMessage(chatId, `📁 فایل جدید محصول را ارسال کنید (یا برای عدم تغییر فایل قبلی /skip بفرستید):`);
+      break;
+
+    case 'EDIT_PRODUCT_FILE':
+      const currentProduct = botData.products[state.pId];
+      botData.products[state.pId] = {
+        name: state.name,
+        price: state.price,
+        description: state.description,
+        photoId: state.photoId || currentProduct.photoId,
+        fileId: msg.document ? msg.document.file_id : currentProduct.fileId
+      };
+      saveData();
+      delete adminStates[chatId];
+      bot.sendMessage(chatId, '✅ محصول با موفقیت ویرایش و به‌روزرسانی شد.');
+      showAdminProductsMenu(chatId);
+      break;
+
+    // تنظیمات متون عمومی
+    case 'EDIT_SETTING_TEXT':
+      botData.settings[state.key] = text;
+      saveData();
+      delete adminStates[chatId];
+      bot.sendMessage(chatId, '✅ تغییرات متن با موفقیت ذخیره شد.');
+      showAdminSettingsMenu(chatId);
+      break;
+
+    case 'EDIT_CARD_NO':
+      adminStates[chatId] = { type: 'EDIT_CARD_NAME', cardNo: text };
+      bot.sendMessage(chatId, `👤 نام صاحب حساب جدید کارت را وارد کنید:`);
+      break;
+
+    case 'EDIT_CARD_NAME':
+      botData.settings.cardNo = state.cardNo;
+      botData.settings.cardName = text;
+      saveData();
+      delete adminStates[chatId];
+      bot.sendMessage(chatId, '💳 اطلاعات حساب بانکی با موفقیت به‌روزرسانی شد.');
+      break;
+  }
+}
+
+// اگر ادمین تمایل به ارسال عکس یا فایل جدید نداشت
+bot.onText(/\/skip/, (msg) => {
+  const chatId = msg.chat.id;
+  if (String(chatId) !== adminChatId || !adminStates[chatId]) return;
+
+  const state = adminStates[chatId];
+  if (state.type === 'ADD_PRODUCT_PHOTO') {
+    adminStates[chatId] = { ...state, type: 'ADD_PRODUCT_FILE' };
+    bot.sendMessage(chatId, `📁 دستور نادیده‌گرفتن عکس ثبت شد. حالا <b>فایل اصلی محصول</b> را ارسال کنید:`);
+  } else if (state.type === 'EDIT_PRODUCT_PHOTO') {
+    adminStates[chatId] = { ...state, type: 'EDIT_PRODUCT_FILE' };
+    bot.sendMessage(chatId, `📁 دستور نادیده‌گرفتن عکس ثبت شد. فایل جدید را ارسال کنید (یا با /skip فایل قبلی را حفظ کنید):`);
+  } else if (state.type === 'EDIT_PRODUCT_FILE') {
+    const currentProduct = botData.products[state.pId];
+    botData.products[state.pId] = {
+      name: state.name,
+      price: state.price,
+      description: state.description,
+      photoId: state.photoId || currentProduct.photoId,
+      fileId: currentProduct.fileId
+    };
+    saveData();
+    delete adminStates[chatId];
+    bot.sendMessage(chatId, '✅ تغییرات محصول (بدون تغییر فایل قبلی) اعمال شد.');
+    showAdminProductsMenu(chatId);
+  }
+});
+
+// --- مدیریت رسیدهای کاربران ---
+function handleUserReceipt(msg) {
   const chatId = msg.chat.id;
   const userText = msg.text;
   const username = msg.from.username ? `@${msg.from.username}` : 'بدون آیدی';
   const fullName = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim();
 
-  // ۱. اگر پیام دستور تلگرامی بود، نادیده بگیر
-  if (userText && userText.startsWith('/')) return;
-  
-  // ۲. اگر پیام از طرف خود ادمین بود
-  if (String(chatId) === String(adminChatId)) {
-    if (msg.document) {
-      console.log(`📌 File ID شناسایی شد: ${msg.document.file_id}`);
-    }
-    return; 
-  }
+  // پیدا کردن آخرین محصولی که کاربر احتمالاً در حال خرید آن بوده است (از طریق استخراج نام محصولات)
+  // به عنوان یک راهکار ساده و پایدار، لیست کلید محصولات را می‌فرستیم تا ادمین مشخص کند برای کدام محصول است.
+  bot.sendMessage(chatId, `<b>✅ رسید شما دریافت شد!</b>\n\nاطلاعات ارسالی در صف بررسی قرار گرفت. به محض تایید تراکنش توسط مدیریت شیترا، فایل محصول به صورت خودکار برای شما همینجا ارسال خواهد شد.`, { parse_mode: 'HTML' });
 
-  // ۳. ارسال پیام تایید به کاربر
-  bot.sendMessage(chatId, MESSAGES.receiptProcessing, { parse_mode: 'HTML' });
+  // برای ساده‌تر شدن تصمیم‌گیری ادمین، کلیدهای تایید به همراه شناسه تمام محصولات داینامیک ساخته می‌شود
+  const pKeys = Object.keys(botData.products);
+  const adminKeyboard = { inline_keyboard: [] };
 
-  // دکمه‌های تایید و رد اختصاصی برای ادمین
-  const adminKeyboard = {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: '✅ تایید و ارسال فایل', callback_data: `approve_${chatId}` },
-          { text: '❌ رد تراکنش', callback_data: `reject_${chatId}` }
-        ]
-      ]
-    }
-  };
+  pKeys.forEach(pId => {
+    adminKeyboard.inline_keyboard.push([
+      { text: `✅ تایید و ارسال [${botData.products[pId].name}]`, callback_data: `approve_${chatId}_${pId}` }
+    ]);
+  });
+  adminKeyboard.inline_keyboard.push([{ text: '❌ رد کل تراکنش', callback_data: `reject_${chatId}_none` }]);
 
-  const baseReportText = `🔔 <b>رسید یا پیام جدید پرداخت!</b>\n\n👤 <b>کاربر:</b> ${fullName} (${username})\n🆔 <b>شناسه کاربر:</b> <code>${chatId}</code>`;
+  const baseReportText = `🔔 <b>رسید یا پیام پرداخت جدید!</b>\n\n👤 <b>کاربر:</b> ${fullName} (${username})\n🆔 <b>شناسه کاربر:</b> <code>${chatId}</code>`;
   const textDetails = userText ? `\n📝 <b>متن ارسال شده:</b>\n<code>${userText}</code>` : '\n📝 <b>نوع رسید:</b> عکس یا فایل رسانه‌ای';
-  const adminReportText = baseReportText + textDetails;
+  const adminReportText = baseReportText + textDetails + `\n\n👇 ادمین عزیز، جهت تایید، محصول خریداری شده را انتخاب کنید:`;
 
-  // ۴. ارسال هوشمند به ادمین بر اساس فرمت ارسالی مشتری
   if (msg.photo) {
     const photoId = msg.photo[msg.photo.length - 1].file_id;
-    bot.sendPhoto(adminChatId, photoId, {
-      caption: adminReportText,
-      parse_mode: 'HTML',
-      ...adminKeyboard
-    }).catch((err) => console.error('Error photo:', err.message));
-
+    bot.sendPhoto(adminChatId, photoId, { caption: adminReportText, parse_mode: 'HTML', reply_markup: adminKeyboard });
   } else if (msg.document) {
-    bot.sendDocument(adminChatId, msg.document.file_id, {
-      caption: adminReportText,
-      parse_mode: 'HTML',
-      ...adminKeyboard
-    }).catch((err) => console.error('Error document:', err.message));
-
+    bot.sendDocument(adminChatId, msg.document.file_id, { caption: adminReportText, parse_mode: 'HTML', reply_markup: adminKeyboard });
   } else {
-    bot.sendMessage(adminChatId, adminReportText, {
-      parse_mode: 'HTML',
-      ...adminKeyboard
-    }).catch((err) => console.error('Error text:', err.message));
+    bot.sendMessage(adminChatId, adminReportText, { parse_mode: 'HTML', reply_markup: adminKeyboard });
   }
-});
-
-// --- مدیریت کلیک ادمین روی دکمه‌های تایید یا رد ---
-function handleAdminCallback(query) {
-  const adminAction = query.data;
-  const [action, targetUserId] = adminAction.split('_');
-  
-  if (action === 'approve') {
-    bot.sendMessage(targetUserId, MESSAGES.purchaseApproved, { parse_mode: 'HTML' })
-      .then(() => {
-        if (habitFileId && habitFileId !== '123') {
-          bot.sendDocument(targetUserId, habitFileId, { caption: '🎁 فایل هبیت‌ترکر شیترا' });
-        } else {
-          bot.sendMessage(targetUserId, `⚠️ فایل هبیت‌ترکر هنوز روی سیستم پیکربندی نشده است. لطفا به پشتیبانی پیام دهید.`);
-        }
-      });
-
-    bot.editMessageCaption(`✅ این رسید تایید شد و فایل برای کاربر ارسال گردید.`, {
-      chat_id: adminChatId,
-      message_id: query.message.message_id
-    }).catch(() => {
-      bot.editMessageText(`✅ این رسید تایید شد و فایل برای کاربر ارسال گردید.`, {
-        chat_id: adminChatId,
-        message_id: query.message.message_id
-      });
-    });
-
-  } else if (action === 'reject') {
-    bot.sendMessage(targetUserId, MESSAGES.purchaseRejected, { parse_mode: 'HTML' });
-
-    bot.editMessageCaption(`❌ این تراکنش توسط شما رد شد.`, {
-      chat_id: adminChatId,
-      message_id: query.message.message_id
-    }).catch(() => {
-      bot.editMessageText(`❌ این تراکنش توسط شما رد شد.`, {
-        chat_id: adminChatId,
-        message_id: query.message.message_id
-      });
-    });
-  }
-
-  bot.answerCallbackQuery(query.id, { text: 'دستور اجرا شد' });
 }
 
-// --- خطایابی شبکه ---
+// بررسی ارورها جهت عدم کرش ربات
 bot.on('polling_error', (err) => console.warn(`[Polling Error]: ${err.message}`));
 bot.on('error', (err) => console.error(`[Bot Error]: ${err.message}`));
 
-console.log('🤖 ربات شیترا با موفقیت روی Railway راه‌اندازی شد...');
+console.log('🤖 ربات هوشمند و داینامیک شیترا آماده به کار است...');
