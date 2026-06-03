@@ -17,6 +17,7 @@ if (!BOT_TOKEN || !ADMIN_CHAT_ID) {
 // ─── Data Layer ─────────────────────────────────────────────────────────────
 const DATA_PATH = '/app/data/data.json';
 const DATA_DIR = path.dirname(DATA_PATH);
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const DEFAULT_DATA = {
   texts: {
@@ -137,6 +138,16 @@ function escapeHtml(text = '') {
     .replace(/'/g, '&#039;');
 }
 
+function normalizeDigits(value = '') {
+  return String(value).replace(/\D/g, '');
+}
+
+function formatCardNumber(value = '') {
+  const digits = normalizeDigits(value);
+  if (digits.length !== 16) return value;
+  return digits.replace(/(\d{4})(?=\d)/g, '$1-');
+}
+
 function sortedProducts(products) {
   return [...products].sort((a, b) => (a.order || 0) - (b.order || 0));
 }
@@ -145,20 +156,17 @@ function activeProducts(products) {
   return sortedProducts(products).filter(p => p.active);
 }
 
-// ─── Discount Timer ─────────────────────────────────────────────────────────
-// Resets every day at midnight (00:00)
 function getDiscountTimer() {
   const now = new Date();
   const midnight = new Date(now);
   midnight.setHours(24, 0, 0, 0);
-  const diff = midnight - now; // ms remaining until midnight
+  const diff = midnight - now;
 
   const totalSecs = Math.floor(diff / 1000);
   const hours = Math.floor(totalSecs / 3600);
   const mins = Math.floor((totalSecs % 3600) / 60);
   const secs = totalSecs % 60;
 
-  // Format in Persian style
   if (hours > 0) {
     return `${hours} ساعت و ${mins} دقیقه`;
   } else if (mins > 0) {
@@ -168,9 +176,42 @@ function getDiscountTimer() {
   }
 }
 
-// ─── Keyboards ───────────────────────────────────────────────────────────────
-// No more reply keyboard for users — everything via inline buttons
+function isVisualMedia(m) {
+  return m && (m.type === 'photo' || m.type === 'video');
+}
 
+async function sendVisualMediaGroup(chatId, mediaItems, caption = '') {
+  const visuals = (mediaItems || []).filter(isVisualMedia);
+  if (visuals.length === 0) return false;
+
+  for (let i = 0; i < visuals.length; i += 10) {
+    const chunk = visuals.slice(i, i + 10).map((m, idx) => ({
+      type: m.type,
+      media: m.fileId,
+      ...(i === 0 && idx === 0 && caption ? { caption, parse_mode: 'HTML' } : {}),
+    }));
+    await bot.sendMediaGroup(chatId, chunk);
+  }
+
+  return true;
+}
+
+async function sendNonVisualMedia(chatId, mediaItems) {
+  for (const m of (mediaItems || [])) {
+    try {
+      if (!m || isVisualMedia(m)) continue;
+      if (m.type === 'document') {
+        await bot.sendDocument(chatId, m.fileId, {}, { filename: m.name || 'file' });
+      } else {
+        await bot.sendDocument(chatId, m.fileId, {}, { filename: m.name || 'file' });
+      }
+    } catch (e) {
+      console.error('Send media error:', e.message);
+    }
+  }
+}
+
+// ─── Keyboards ───────────────────────────────────────────────────────────────
 function mainQuickLinksKeyboard() {
   return {
     reply_markup: {
@@ -209,15 +250,14 @@ function productsListKeyboard(products) {
   const active = activeProducts(products);
   if (active.length === 0) return null;
 
-  const rows = active.map(p => ([
+  const rows = active.map(p => [
     {
-      // Custom emoji support: use product.emoji if set, otherwise no emoji
       text: p.emoji
         ? `${p.emoji} ${p.name} | ${formatPrice(p.price)}`
         : `${p.name} | ${formatPrice(p.price)}`,
       callback_data: `product_${p.id}`,
     },
-  ]));
+  ]);
 
   rows.push([{ text: '🔙 بازگشت', callback_data: 'quick_back' }]);
 
@@ -295,6 +335,18 @@ function selectProductForUserKeyboard(products, userId) {
   return { reply_markup: { inline_keyboard: rows } };
 }
 
+function productActionKeyboard(cardNumber) {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📤 ارسال رسید پرداخت', callback_data: 'send_receipt_active' }],
+        [{ text: '📋 کپی شماره کارت', copy_text: { text: normalizeDigits(cardNumber) } }],
+        [{ text: '🔙 بازگشت به محصولات', callback_data: 'quick_products' }],
+      ],
+    },
+  };
+}
+
 // ─── Stat Helpers ───────────────────────────────────────────────────────────
 function trackStart(data, userId) {
   data.stats.starts = (data.stats.starts || 0) + 1;
@@ -350,94 +402,112 @@ async function sendProductFiles(chatId, product) {
   }
 }
 
-// ─── Build product caption ──────────────────────────────────────────────────
+async function finalizeAdminReceiptMessage(query, statusText) {
+  if (!query || !query.message) return;
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+  const originalText = query.message.text || '';
+  const newText = `${originalText}\n\n${statusText}`;
+
+  try {
+    await bot.editMessageText(newText, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [] },
+    });
+  } catch (e) {
+    try {
+      await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId });
+    } catch (_) {}
+  }
+}
+
 function buildProductCaption(product, data) {
   const desc = (product.description || '').trim();
   const shortDesc = desc.length > 700 ? `${desc.slice(0, 700)}…` : desc;
 
   const hasDiscount =
-    product.originalPrice &&
-    product.price &&
+    Number(product.originalPrice) > 0 &&
+    Number(product.price) > 0 &&
     Number(product.originalPrice) !== Number(product.price);
 
   let priceSection;
   if (hasDiscount) {
-    // Show crossed-out original price and discounted price
     priceSection =
-      `💰 قیمت: <s>${escapeHtml(formatPrice(product.originalPrice))}</s>  ${escapeHtml(formatPrice(product.price))}\n` +
+      `💰 قیمت: <s>${escapeHtml(formatPrice(product.originalPrice))}</s>  <b>${escapeHtml(formatPrice(product.price))}</b>\n` +
       `⏳ تخفیف از بین میره: ${escapeHtml(getDiscountTimer())}`;
   } else {
-    // Same price — show plain price without strikethrough
-    priceSection = `💰 قیمت: <b>${escapeHtml(formatPrice(product.price))}</b>`;
+    priceSection = `💰 قیمت: <b>${escapeHtml(formatPrice(product.price || product.originalPrice))}</b>`;
   }
 
-  // Card number on its own line so RTL/LTR doesn't break it
   return (
     `📦 <b>${escapeHtml(product.name)}</b>\n\n` +
     `${escapeHtml(shortDesc || '—')}\n\n` +
     `${priceSection}\n\n` +
     `🏦 شماره کارت:\n` +
-    `<code>${escapeHtml(data.card.number)}</code>\n` +
+    `<code>${escapeHtml(formatCardNumber(data.card.number))}</code>\n` +
     `👤 به نام: ${escapeHtml(data.card.owner)}\n` +
-    `👈 روی شماره کارت ضربه بزنید تا کپی شود.\n\n` +
+    `👈 روی دکمه کپی شماره کارت بزنید تا شماره بدون خط تیره کپی شود.\n\n` +
     `پس از واریز، رسید پرداخت را همین‌جا ارسال کنید. ✨`
   );
 }
 
-// ─── Send product page — ONE message (media + caption merged) ───────────────
 async function sendProductPreview(chatId, product, data) {
   const caption = buildProductCaption(product, data);
-  const media = product.media || [];
-  const receiptButton = {
+  const visuals = (product.media || []).filter(isVisualMedia);
+  const others = (product.media || []).filter(m => m && !isVisualMedia(m));
+
+  const buttonKeyboard = {
     reply_markup: {
-      inline_keyboard: [[{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }]],
+      inline_keyboard: [
+        [{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }],
+        [{ text: '📋 کپی شماره کارت', copy_text: { text: normalizeDigits(data.card.number) } }],
+        [{ text: '🔙 بازگشت به محصولات', callback_data: 'quick_products' }],
+      ],
     },
   };
 
-  if (!media.length) {
-    // No media — just text
+  if (visuals.length === 0) {
     await bot.sendMessage(chatId, caption, {
       parse_mode: 'HTML',
-      ...receiptButton,
+      ...buttonKeyboard,
     });
+    await sendNonVisualMedia(chatId, others);
     return;
   }
 
-  // First media item carries the caption (merged into one message)
-  const first = media[0];
-  const rest = media.slice(1);
-
-  const opts = {
-    caption,
-    parse_mode: 'HTML',
-    ...receiptButton,
-  };
-
-  try {
-    if (first.type === 'photo') {
-      await bot.sendPhoto(chatId, first.fileId, opts);
-    } else if (first.type === 'video') {
-      await bot.sendVideo(chatId, first.fileId, opts);
-    } else if (first.type === 'document') {
-      await bot.sendDocument(chatId, first.fileId, opts, { filename: first.name || 'file' });
-    } else {
-      await bot.sendMessage(chatId, caption, { parse_mode: 'HTML', ...receiptButton });
-    }
-  } catch (e) {
-    console.error('Send preview error:', e.message);
-    await bot.sendMessage(chatId, caption, { parse_mode: 'HTML', ...receiptButton });
-  }
-
-  // Additional media items (no caption)
-  for (const m of rest) {
+  if (visuals.length === 1) {
+    const m = visuals[0];
     try {
-      if (m.type === 'photo') await bot.sendPhoto(chatId, m.fileId);
-      else if (m.type === 'video') await bot.sendVideo(chatId, m.fileId);
-      else if (m.type === 'document') await bot.sendDocument(chatId, m.fileId, {}, { filename: m.name || 'file' });
+      if (m.type === 'photo') {
+        await bot.sendPhoto(chatId, m.fileId, {
+          caption,
+          parse_mode: 'HTML',
+          ...buttonKeyboard,
+        });
+      } else if (m.type === 'video') {
+        await bot.sendVideo(chatId, m.fileId, {
+          caption,
+          parse_mode: 'HTML',
+          ...buttonKeyboard,
+        });
+      }
     } catch (e) {
-      console.error('Send media error:', e.message);
+      console.error('Send preview error:', e.message);
+      await bot.sendMessage(chatId, caption, {
+        parse_mode: 'HTML',
+        ...buttonKeyboard,
+      });
     }
+    await sendNonVisualMedia(chatId, others);
+    return;
   }
+
+  await sendVisualMediaGroup(chatId, visuals, caption);
+  await bot.sendMessage(chatId, 'برای دریافت فایل‌ها، از دکمه‌های زیر استفاده کنید.', {
+    ...buttonKeyboard,
+  });
+  await sendNonVisualMedia(chatId, others);
 }
 
 // ─── User Flows ─────────────────────────────────────────────────────────────
@@ -454,38 +524,42 @@ async function handleStart(msg) {
     return;
   }
 
-  // Send header media (welcome page) + welcome text in one message if possible
   const headerMedia = data.headerMedia || [];
-  if (headerMedia.length > 0) {
-    const first = headerMedia[0];
-    const rest = headerMedia.slice(1);
+  if (headerMedia.length === 0) {
+    await bot.sendMessage(chatId, data.texts.welcome, mainQuickLinksKeyboard());
+    return;
+  }
+
+  const visuals = headerMedia.filter(isVisualMedia);
+  const others = headerMedia.filter(m => m && !isVisualMedia(m));
+
+  if (visuals.length === 1) {
+    const m = visuals[0];
     try {
-      if (first.type === 'photo') {
-        await bot.sendPhoto(chatId, first.fileId, {
+      if (m.type === 'photo') {
+        await bot.sendPhoto(chatId, m.fileId, {
           caption: data.texts.welcome,
           ...mainQuickLinksKeyboard(),
         });
-      } else if (first.type === 'video') {
-        await bot.sendVideo(chatId, first.fileId, {
+      } else if (m.type === 'video') {
+        await bot.sendVideo(chatId, m.fileId, {
           caption: data.texts.welcome,
           ...mainQuickLinksKeyboard(),
         });
-      } else {
-        await bot.sendMessage(chatId, data.texts.welcome, mainQuickLinksKeyboard());
-      }
-      for (const m of rest) {
-        if (m.type === 'photo') await bot.sendPhoto(chatId, m.fileId);
-        else if (m.type === 'video') await bot.sendVideo(chatId, m.fileId);
       }
     } catch (e) {
       await bot.sendMessage(chatId, data.texts.welcome, mainQuickLinksKeyboard());
     }
   } else {
+    if (visuals.length > 1) {
+      await sendVisualMediaGroup(chatId, visuals, data.texts.welcome);
+    }
     await bot.sendMessage(chatId, data.texts.welcome, mainQuickLinksKeyboard());
   }
+
+  await sendNonVisualMedia(chatId, others);
 }
 
-// ─── Products page (with optional page-level media + editable header text) ──
 async function handleProducts(chatId, data) {
   const keyboard = productsListKeyboard(data.products);
   const headerText = data.texts.productsHeader || '🛍 محصولات ما';
@@ -496,34 +570,34 @@ async function handleProducts(chatId, data) {
   }
 
   const pageMedia = data.productsPageMedia || [];
+  const visuals = pageMedia.filter(isVisualMedia);
+  const others = pageMedia.filter(m => m && !isVisualMedia(m));
 
-  if (pageMedia.length > 0) {
-    const first = pageMedia[0];
-    const rest = pageMedia.slice(1);
+  if (visuals.length === 1) {
+    const m = visuals[0];
     try {
-      if (first.type === 'photo') {
-        await bot.sendPhoto(chatId, first.fileId, {
+      if (m.type === 'photo') {
+        await bot.sendPhoto(chatId, m.fileId, {
           caption: headerText,
           ...keyboard,
         });
-      } else if (first.type === 'video') {
-        await bot.sendVideo(chatId, first.fileId, {
+      } else if (m.type === 'video') {
+        await bot.sendVideo(chatId, m.fileId, {
           caption: headerText,
           ...keyboard,
         });
-      } else {
-        await bot.sendMessage(chatId, headerText, keyboard);
-      }
-      for (const m of rest) {
-        if (m.type === 'photo') await bot.sendPhoto(chatId, m.fileId);
-        else if (m.type === 'video') await bot.sendVideo(chatId, m.fileId);
       }
     } catch (e) {
       await bot.sendMessage(chatId, headerText, keyboard);
     }
   } else {
+    if (visuals.length > 1) {
+      await sendVisualMediaGroup(chatId, visuals, headerText);
+    }
     await bot.sendMessage(chatId, headerText, keyboard);
   }
+
+  await sendNonVisualMedia(chatId, others);
 }
 
 async function handleProductView(chatId, productId, userId) {
@@ -618,7 +692,7 @@ async function showAdminTexts(chatId) {
 // ─── Admin: Card ─────────────────────────────────────────────────────────────
 async function showAdminCard(chatId) {
   const data = loadData();
-  await bot.sendMessage(chatId, `💳 تنظیمات کارت:\n\nشماره: ${data.card.number}\nصاحب: ${data.card.owner}`, {
+  await bot.sendMessage(chatId, `💳 تنظیمات کارت:\n\nشماره: ${formatCardNumber(data.card.number)}\nصاحب: ${data.card.owner}`, {
     reply_markup: {
       inline_keyboard: [
         [{ text: '✏️ ویرایش شماره کارت', callback_data: 'acard_number' }],
@@ -793,7 +867,6 @@ async function handleAdminState(msg, state) {
   const step = state.step;
 
   try {
-    // ── Header media (welcome page) ──
     if (step === 'header_media') {
       const data = loadData();
       if (!data.headerMedia) data.headerMedia = [];
@@ -813,7 +886,6 @@ async function handleAdminState(msg, state) {
       return;
     }
 
-    // ── Products page media ──
     if (step === 'products_page_media') {
       const data = loadData();
       if (!data.productsPageMedia) data.productsPageMedia = [];
@@ -1051,7 +1123,7 @@ async function handleAdminState(msg, state) {
     if (step === 'edit_card_number') {
       if (!text.trim()) return;
       const data = loadData();
-      data.card.number = text.trim();
+      data.card.number = normalizeDigits(text.trim());
       saveData(data);
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ شماره کارت ذخیره شد.');
@@ -1111,7 +1183,6 @@ async function handleReceiptFromUser(msg, userId) {
   }
 
   await bot.sendMessage(ADMIN_CHAT_ID, reportText, receiptAdminKeyboard(uid, productId || 'none'));
-  // Confirm to user — single message, no separate keyboard
   await bot.sendMessage(chatId, '✅ رسیدتون دریافت شد! بعد از بررسی خبرتون می‌دیم 🙏', mainQuickLinksKeyboard());
 }
 
@@ -1159,7 +1230,7 @@ bot.on('callback_query', async (query) => {
     }
 
     // ─── User: send receipt ───
-    if (data_str.startsWith('send_receipt_')) {
+    if (data_str.startsWith('send_receipt_') || data_str === 'send_receipt_active') {
       userPendingReceipt[userId] = true;
       const data = loadData();
       await bot.sendMessage(chatId, data.texts.sendReceipt, {
@@ -1282,7 +1353,7 @@ bot.on('callback_query', async (query) => {
     // ─── Add product callbacks ───
     if (data_str === 'add_skip_emoji') {
       const state = getAdminState(chatId);
-      if (state && (state.step === 'add_emoji')) {
+      if (state && state.step === 'add_emoji') {
         state.data.emoji = '';
         state.step = 'add_order';
         await bot.sendMessage(chatId, 'مرحله ۳/۸: ترتیب نمایش را وارد کنید (عدد):', {
@@ -1534,9 +1605,13 @@ bot.on('callback_query', async (query) => {
       if (!product) { await bot.sendMessage(chatId, '❌ محصول یافت نشد.'); return; }
 
       await sendProductFiles(targetUserId, product);
-      await bot.sendMessage(targetUserId, data.texts.paymentConfirm);
+      await bot.sendMessage(targetUserId, data.texts.paymentConfirm, {
+        reply_markup: mainQuickLinksKeyboard().reply_markup,
+      });
       trackSale(data, targetUserId, productId, '', '');
       saveData(data);
+
+      await finalizeAdminReceiptMessage(query, '✅ تراکنش تایید شده');
       await bot.sendMessage(chatId, `✅ فایل‌های «${product.name}» برای کاربر ارسال شدند.`);
       return;
     }
@@ -1561,9 +1636,13 @@ bot.on('callback_query', async (query) => {
       if (!product) { await bot.sendMessage(chatId, '❌ محصول یافت نشد.'); return; }
 
       await sendProductFiles(targetUserId, product);
-      await bot.sendMessage(targetUserId, data.texts.paymentConfirm);
+      await bot.sendMessage(targetUserId, data.texts.paymentConfirm, {
+        reply_markup: mainQuickLinksKeyboard().reply_markup,
+      });
       trackSale(data, targetUserId, productId, '', '');
       saveData(data);
+
+      await finalizeAdminReceiptMessage(query, '✅ تراکنش تایید شده');
       await bot.sendMessage(chatId, `✅ فایل‌های «${product.name}» برای کاربر ارسال شدند.`);
       return;
     }
@@ -1571,7 +1650,10 @@ bot.on('callback_query', async (query) => {
     if (data_str.startsWith('receipt_reject_')) {
       const targetUserId = data_str.replace('receipt_reject_', '');
       const data = loadData();
-      await bot.sendMessage(targetUserId, data.texts.paymentReject);
+      await bot.sendMessage(targetUserId, data.texts.paymentReject, {
+        reply_markup: mainQuickLinksKeyboard().reply_markup,
+      });
+      await finalizeAdminReceiptMessage(query, '❌ تراکنش رد شد');
       await bot.sendMessage(chatId, '✅ پیام رد پرداخت ارسال شد.');
       return;
     }
