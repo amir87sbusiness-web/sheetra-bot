@@ -17,18 +17,17 @@ if (!BOT_TOKEN || !ADMIN_CHAT_ID) {
 // ─── Data Layer ─────────────────────────────────────────────────────────────
 const DATA_PATH = '/app/data/data.json';
 const DATA_DIR = path.dirname(DATA_PATH);
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 const DEFAULT_DATA = {
   texts: {
-    welcome: '👋 خوش آمدید!\n\nاز دکمه‌های زیر استفاده کنید.',
-    productsPage: '🛍 اینجا محصولات فعال را می‌بینی. یکی را انتخاب کن.',
-    guide: '📖 راهنمای استفاده:\n\n۱. محصول مورد نظر را انتخاب کنید\n۲. مبلغ را به شماره کارت واریز کنید\n۳. تصویر رسید را ارسال کنید\n۴. پس از تایید، فایل برای شما ارسال می‌شود.',
-    support: '📞 پشتیبانی:\n\nبرای ارتباط با پشتیبانی پیام دهید.',
-    paymentConfirm: '✅ پرداخت شما تایید شد. فایل‌های خریداری شده برای شما ارسال شدند.',
-    paymentReject: '❌ پرداخت شما رد شد. لطفاً با پشتیبانی تماس بگیرید.',
-    noProduct: '⚠️ در حال حاضر محصولی موجود نیست.',
-    sendReceipt: '📤 لطفاً تصویر یا فایل رسید پرداخت خود را ارسال کنید.',
+    welcome: '👋 خوش آمدید!\n\nاز گزینه‌های زیر انتخاب کنید.',
+    guide: '📖 راهنمای خرید:\n\n۱. محصول مورد نظر را انتخاب کنید\n۲. مبلغ را به شماره کارت واریز کنید\n۳. تصویر رسید را ارسال کنید\n۴. پس از تایید، فایل برایتان ارسال می‌شود.',
+    support: '📞 پشتیبانی:\n\nبرای ارتباط با ما پیام بدید.',
+    paymentConfirm: '✅ پرداخت تایید شد. فایل‌هاتون ارسال شد، ممنون از خریدتون 🙏',
+    paymentReject: '❌ متأسفانه پرداخت تایید نشد. لطفاً با پشتیبانی تماس بگیرید.',
+    noProduct: '⚠️ فعلاً محصولی موجود نیست. بعداً سر بزنید!',
+    sendReceipt: '📤 تصویر رسید پرداختتون رو اینجا بفرستید.',
+    productsHeader: '🛍 محصولات ما',
   },
   card: {
     number: '6037-XXXX-XXXX-XXXX',
@@ -36,6 +35,7 @@ const DEFAULT_DATA = {
   },
   products: [],
   headerMedia: [],
+  productsPageMedia: [],
   stats: {
     starts: 0,
     uniqueUsers: [],
@@ -110,15 +110,9 @@ const adminStates = {};
 const userLastProduct = {};
 const userPendingReceipt = {};
 
-function setAdminState(chatId, state) {
-  adminStates[chatId] = state;
-}
-function getAdminState(chatId) {
-  return adminStates[chatId] || null;
-}
-function clearAdminState(chatId) {
-  delete adminStates[chatId];
-}
+function setAdminState(chatId, state) { adminStates[chatId] = state; }
+function getAdminState(chatId) { return adminStates[chatId] || null; }
+function clearAdminState(chatId) { delete adminStates[chatId]; }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function isAdmin(chatId) {
@@ -151,78 +145,42 @@ function activeProducts(products) {
   return sortedProducts(products).filter(p => p.active);
 }
 
-function formatRemainingTime(endAt) {
-  const diff = Number(endAt) - Date.now();
-  if (!Number.isFinite(diff) || diff <= 0) return null;
+// ─── Discount Timer ─────────────────────────────────────────────────────────
+// Resets every day at midnight (00:00)
+function getDiscountTimer() {
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setHours(24, 0, 0, 0);
+  const diff = midnight - now; // ms remaining until midnight
 
-  const totalMinutes = Math.floor(diff / 60000);
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
+  const totalSecs = Math.floor(diff / 1000);
+  const hours = Math.floor(totalSecs / 3600);
+  const mins = Math.floor((totalSecs % 3600) / 60);
+  const secs = totalSecs % 60;
 
-  const parts = [];
-  if (days > 0) parts.push(`${days.toLocaleString('fa-IR')} روز`);
-  if (hours > 0) parts.push(`${hours.toLocaleString('fa-IR')} ساعت`);
-  if (minutes > 0 && days === 0) parts.push(`${minutes.toLocaleString('fa-IR')} دقیقه`);
-
-  if (!parts.length) return `${Math.max(1, minutes).toLocaleString('fa-IR')} دقیقه`;
-  return parts.join(' و ');
-}
-
-function ensureProductDiscountTimer(data, product) {
-  if (!product) return;
-  const hasDiscount = Number(product.originalPrice) > Number(product.price) && Number(product.price) > 0;
-  if (hasDiscount && !product.discountEndsAt) {
-    product.discountEndsAt = Date.now() + DAY_MS;
-    saveData(data);
+  // Format in Persian style
+  if (hours > 0) {
+    return `${hours} ساعت و ${mins} دقیقه`;
+  } else if (mins > 0) {
+    return `${mins} دقیقه و ${secs} ثانیه`;
+  } else {
+    return `${secs} ثانیه`;
   }
-}
-
-function productPriceLine(product) {
-  const original = Number(product.originalPrice);
-  const current = Number(product.price);
-
-  if (!original || original <= 0 || original === current || current <= 0) {
-    return `💰 قیمت: <b>${escapeHtml(formatPrice(current || original || 0))}</b>`;
-  }
-
-  return `💰 قیمت: <s>${escapeHtml(formatPrice(original))}</s> <b>${escapeHtml(formatPrice(current))}</b>`;
-}
-
-function buildProductCaption(product, data) {
-  const desc = (product.description || '').trim();
-  const shortDesc = desc.length > 420 ? `${desc.slice(0, 420)}…` : desc;
-  const timer = Number(product.originalPrice) > Number(product.price) ? formatRemainingTime(product.discountEndsAt) : null;
-
-  return (
-    `📦 <b>${escapeHtml(product.name)}</b>\n\n` +
-    `${escapeHtml(shortDesc || '—')}\n\n` +
-    `${productPriceLine(product)}\n` +
-    (timer ? `\n⏳ تخفیف تا پایان: <b>${escapeHtml(timer)}</b>\n` : '\n') +
-    `🏦 شماره کارت:\n` +
-    `<code>${escapeHtml(data.card.number)}</code>\n` +
-    `👤 به نام: ${escapeHtml(data.card.owner)}\n\n` +
-    `👈 روی شماره کارت ضربه بزنید تا کپی شود.\n\n` +
-    `پس از واریز، رسید پرداخت را همین‌جا ارسال کنید. ✨`
-  );
-}
-
-function buildProductsPageCaption(data) {
-  return escapeHtml(data.texts.productsPage || '🛍 اینجا محصولات فعال را می‌بینی. یکی را انتخاب کن.');
 }
 
 // ─── Keyboards ───────────────────────────────────────────────────────────────
+// No more reply keyboard for users — everything via inline buttons
+
 function mainQuickLinksKeyboard() {
   return {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: 'محصولات', callback_data: 'quick_products' },
-          { text: 'راهنما', callback_data: 'quick_guide' },
+          { text: '🛍 محصولات', callback_data: 'quick_products' },
+          { text: '📖 راهنما', callback_data: 'quick_guide' },
         ],
         [
-          { text: 'پشتیبانی', callback_data: 'quick_support' },
-          { text: 'خانه', callback_data: 'quick_back' },
+          { text: '📞 پشتیبانی', callback_data: 'quick_support' },
         ],
       ],
     },
@@ -236,7 +194,8 @@ function adminMenuKeyboard() {
         [{ text: '📦 مدیریت محصولات', callback_data: 'admin_products' }],
         [{ text: '✏️ متون ربات', callback_data: 'admin_texts' }],
         [{ text: '💳 تنظیمات کارت', callback_data: 'admin_card' }],
-        [{ text: '🖼 کاور صفحه محصولات', callback_data: 'admin_header_media' }],
+        [{ text: '🖼 هدر صفحه خوش‌آمد', callback_data: 'admin_header_media' }],
+        [{ text: '🖼 مدیای صفحه محصولات', callback_data: 'admin_products_media' }],
         [{ text: '📊 آمار', callback_data: 'admin_stats' }],
         [{ text: '🛒 آمار خریداران', callback_data: 'admin_buyers' }],
         [{ text: '💾 بکاپ اطلاعات', callback_data: 'admin_backup' }],
@@ -252,14 +211,15 @@ function productsListKeyboard(products) {
 
   const rows = active.map(p => ([
     {
-      text: `${p.name} — ${formatPrice(p.price)}`,
+      // Custom emoji support: use product.emoji if set, otherwise no emoji
+      text: p.emoji
+        ? `${p.emoji} ${p.name} | ${formatPrice(p.price)}`
+        : `${p.name} | ${formatPrice(p.price)}`,
       callback_data: `product_${p.id}`,
     },
   ]));
 
-  rows.push([
-    { text: 'خانه', callback_data: 'quick_back' },
-  ]);
+  rows.push([{ text: '🔙 بازگشت', callback_data: 'quick_back' }]);
 
   return { reply_markup: { inline_keyboard: rows } };
 }
@@ -282,6 +242,7 @@ function adminProductActionsKeyboard(productId) {
     reply_markup: {
       inline_keyboard: [
         [{ text: '✏️ ویرایش نام', callback_data: `ape_name_${productId}` }],
+        [{ text: '😀 ویرایش ایموجی', callback_data: `ape_emoji_${productId}` }],
         [{ text: '📝 ویرایش توضیحات', callback_data: `ape_desc_${productId}` }],
         [{ text: '💰 ویرایش قیمت‌ها', callback_data: `ape_prices_${productId}` }],
         [{ text: '🔢 ویرایش ترتیب', callback_data: `ape_order_${productId}` }],
@@ -300,13 +261,13 @@ function adminTextsKeyboard() {
     reply_markup: {
       inline_keyboard: [
         [{ text: '👋 متن خوش‌آمد', callback_data: 'atext_welcome' }],
-        [{ text: '🛍 متن صفحه محصولات', callback_data: 'atext_productsPage' }],
         [{ text: '📖 متن راهنما', callback_data: 'atext_guide' }],
         [{ text: '📞 متن پشتیبانی', callback_data: 'atext_support' }],
         [{ text: '✅ متن تایید پرداخت', callback_data: 'atext_paymentConfirm' }],
         [{ text: '❌ متن رد پرداخت', callback_data: 'atext_paymentReject' }],
         [{ text: '⚠️ متن نبود محصول', callback_data: 'atext_noProduct' }],
         [{ text: '📤 متن درخواست رسید', callback_data: 'atext_sendReceipt' }],
+        [{ text: '🛍 عنوان صفحه محصولات', callback_data: 'atext_productsHeader' }],
         [{ text: '🔙 بازگشت', callback_data: 'admin_back' }],
       ],
     },
@@ -373,58 +334,6 @@ function trackSale(data, userId, productId, username, firstName) {
 }
 
 // ─── Send Helpers ───────────────────────────────────────────────────────────
-async function sendSingleCoverMessage(chatId, coverItems, caption, keyboard, parseMode = 'HTML') {
-  const media = Array.isArray(coverItems) && coverItems.length > 0 ? coverItems[0] : null;
-
-  if (!media) {
-    await bot.sendMessage(chatId, caption, {
-      parse_mode: parseMode,
-      reply_markup: keyboard.reply_markup,
-    });
-    return;
-  }
-
-  try {
-    if (media.type === 'photo') {
-      await bot.sendPhoto(chatId, media.fileId, {
-        caption,
-        parse_mode: parseMode,
-        reply_markup: keyboard.reply_markup,
-      });
-      return;
-    }
-
-    if (media.type === 'video') {
-      await bot.sendVideo(chatId, media.fileId, {
-        caption,
-        parse_mode: parseMode,
-        reply_markup: keyboard.reply_markup,
-      });
-      return;
-    }
-
-    if (media.type === 'document') {
-      await bot.sendDocument(chatId, media.fileId, {
-        caption,
-        parse_mode: parseMode,
-        reply_markup: keyboard.reply_markup,
-      });
-      return;
-    }
-
-    await bot.sendMessage(chatId, caption, {
-      parse_mode: parseMode,
-      reply_markup: keyboard.reply_markup,
-    });
-  } catch (e) {
-    console.error('Send cover message error:', e.message);
-    await bot.sendMessage(chatId, caption, {
-      parse_mode: parseMode,
-      reply_markup: keyboard.reply_markup,
-    });
-  }
-}
-
 async function sendProductFiles(chatId, product) {
   for (const f of (product.files || [])) {
     try {
@@ -441,31 +350,94 @@ async function sendProductFiles(chatId, product) {
   }
 }
 
-async function sendUserHome(chatId) {
-  const data = loadData();
-  await bot.sendMessage(chatId, data.texts.welcome, {
-    reply_markup: mainQuickLinksKeyboard().reply_markup,
-  });
+// ─── Build product caption ──────────────────────────────────────────────────
+function buildProductCaption(product, data) {
+  const desc = (product.description || '').trim();
+  const shortDesc = desc.length > 700 ? `${desc.slice(0, 700)}…` : desc;
+
+  const hasDiscount =
+    product.originalPrice &&
+    product.price &&
+    Number(product.originalPrice) !== Number(product.price);
+
+  let priceSection;
+  if (hasDiscount) {
+    // Show crossed-out original price and discounted price
+    priceSection =
+      `💰 قیمت: <s>${escapeHtml(formatPrice(product.originalPrice))}</s>  ${escapeHtml(formatPrice(product.price))}\n` +
+      `⏳ تخفیف از بین میره: ${escapeHtml(getDiscountTimer())}`;
+  } else {
+    // Same price — show plain price without strikethrough
+    priceSection = `💰 قیمت: <b>${escapeHtml(formatPrice(product.price))}</b>`;
+  }
+
+  // Card number on its own line so RTL/LTR doesn't break it
+  return (
+    `📦 <b>${escapeHtml(product.name)}</b>\n\n` +
+    `${escapeHtml(shortDesc || '—')}\n\n` +
+    `${priceSection}\n\n` +
+    `🏦 شماره کارت:\n` +
+    `<code>${escapeHtml(data.card.number)}</code>\n` +
+    `👤 به نام: ${escapeHtml(data.card.owner)}\n` +
+    `👈 روی شماره کارت ضربه بزنید تا کپی شود.\n\n` +
+    `پس از واریز، رسید پرداخت را همین‌جا ارسال کنید. ✨`
+  );
 }
 
-async function sendProductsPage(chatId) {
-  const data = loadData();
-  const caption = buildProductsPageCaption(data);
-  const keyboard = productsListKeyboard(data.products);
+// ─── Send product page — ONE message (media + caption merged) ───────────────
+async function sendProductPreview(chatId, product, data) {
+  const caption = buildProductCaption(product, data);
+  const media = product.media || [];
+  const receiptButton = {
+    reply_markup: {
+      inline_keyboard: [[{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }]],
+    },
+  };
 
-  if (!keyboard) {
-    await bot.sendMessage(chatId, data.texts.noProduct, {
-      reply_markup: mainQuickLinksKeyboard().reply_markup,
+  if (!media.length) {
+    // No media — just text
+    await bot.sendMessage(chatId, caption, {
+      parse_mode: 'HTML',
+      ...receiptButton,
     });
     return;
   }
 
-  await sendSingleCoverMessage(chatId, data.headerMedia || [], caption, keyboard, 'HTML');
-}
+  // First media item carries the caption (merged into one message)
+  const first = media[0];
+  const rest = media.slice(1);
 
-function buildProductCaptionAndMaybeFixTimer(data, product) {
-  ensureProductDiscountTimer(data, product);
-  return buildProductCaption(product, data);
+  const opts = {
+    caption,
+    parse_mode: 'HTML',
+    ...receiptButton,
+  };
+
+  try {
+    if (first.type === 'photo') {
+      await bot.sendPhoto(chatId, first.fileId, opts);
+    } else if (first.type === 'video') {
+      await bot.sendVideo(chatId, first.fileId, opts);
+    } else if (first.type === 'document') {
+      await bot.sendDocument(chatId, first.fileId, opts, { filename: first.name || 'file' });
+    } else {
+      await bot.sendMessage(chatId, caption, { parse_mode: 'HTML', ...receiptButton });
+    }
+  } catch (e) {
+    console.error('Send preview error:', e.message);
+    await bot.sendMessage(chatId, caption, { parse_mode: 'HTML', ...receiptButton });
+  }
+
+  // Additional media items (no caption)
+  for (const m of rest) {
+    try {
+      if (m.type === 'photo') await bot.sendPhoto(chatId, m.fileId);
+      else if (m.type === 'video') await bot.sendVideo(chatId, m.fileId);
+      else if (m.type === 'document') await bot.sendDocument(chatId, m.fileId, {}, { filename: m.name || 'file' });
+    } catch (e) {
+      console.error('Send media error:', e.message);
+    }
+  }
 }
 
 // ─── User Flows ─────────────────────────────────────────────────────────────
@@ -482,9 +454,76 @@ async function handleStart(msg) {
     return;
   }
 
-  await bot.sendMessage(chatId, data.texts.welcome, {
-    reply_markup: mainQuickLinksKeyboard().reply_markup,
-  });
+  // Send header media (welcome page) + welcome text in one message if possible
+  const headerMedia = data.headerMedia || [];
+  if (headerMedia.length > 0) {
+    const first = headerMedia[0];
+    const rest = headerMedia.slice(1);
+    try {
+      if (first.type === 'photo') {
+        await bot.sendPhoto(chatId, first.fileId, {
+          caption: data.texts.welcome,
+          ...mainQuickLinksKeyboard(),
+        });
+      } else if (first.type === 'video') {
+        await bot.sendVideo(chatId, first.fileId, {
+          caption: data.texts.welcome,
+          ...mainQuickLinksKeyboard(),
+        });
+      } else {
+        await bot.sendMessage(chatId, data.texts.welcome, mainQuickLinksKeyboard());
+      }
+      for (const m of rest) {
+        if (m.type === 'photo') await bot.sendPhoto(chatId, m.fileId);
+        else if (m.type === 'video') await bot.sendVideo(chatId, m.fileId);
+      }
+    } catch (e) {
+      await bot.sendMessage(chatId, data.texts.welcome, mainQuickLinksKeyboard());
+    }
+  } else {
+    await bot.sendMessage(chatId, data.texts.welcome, mainQuickLinksKeyboard());
+  }
+}
+
+// ─── Products page (with optional page-level media + editable header text) ──
+async function handleProducts(chatId, data) {
+  const keyboard = productsListKeyboard(data.products);
+  const headerText = data.texts.productsHeader || '🛍 محصولات ما';
+
+  if (!keyboard) {
+    await bot.sendMessage(chatId, data.texts.noProduct, mainQuickLinksKeyboard());
+    return;
+  }
+
+  const pageMedia = data.productsPageMedia || [];
+
+  if (pageMedia.length > 0) {
+    const first = pageMedia[0];
+    const rest = pageMedia.slice(1);
+    try {
+      if (first.type === 'photo') {
+        await bot.sendPhoto(chatId, first.fileId, {
+          caption: headerText,
+          ...keyboard,
+        });
+      } else if (first.type === 'video') {
+        await bot.sendVideo(chatId, first.fileId, {
+          caption: headerText,
+          ...keyboard,
+        });
+      } else {
+        await bot.sendMessage(chatId, headerText, keyboard);
+      }
+      for (const m of rest) {
+        if (m.type === 'photo') await bot.sendPhoto(chatId, m.fileId);
+        else if (m.type === 'video') await bot.sendVideo(chatId, m.fileId);
+      }
+    } catch (e) {
+      await bot.sendMessage(chatId, headerText, keyboard);
+    }
+  } else {
+    await bot.sendMessage(chatId, headerText, keyboard);
+  }
 }
 
 async function handleProductView(chatId, productId, userId) {
@@ -492,36 +531,15 @@ async function handleProductView(chatId, productId, userId) {
   const product = data.products.find(p => String(p.id) === String(productId));
 
   if (!product || !product.active) {
-    await bot.sendMessage(chatId, '❌ محصول یافت نشد.', {
-      reply_markup: mainQuickLinksKeyboard().reply_markup,
-    });
+    await bot.sendMessage(chatId, '❌ این محصول دیگر موجود نیست.');
     return;
   }
 
   userLastProduct[userId] = productId;
   trackProductClick(data, productId);
-
-  const caption = buildProductCaptionAndMaybeFixTimer(data, product);
   saveData(data);
 
-  const coverItems = product.media || [];
-  const keyboard = {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: 'ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }],
-        [{ text: 'بازگشت به محصولات', callback_data: 'quick_products' }],
-      ],
-    },
-  };
-
-  if (coverItems.length > 0) {
-    await sendSingleCoverMessage(chatId, coverItems, caption, keyboard, 'HTML');
-  } else {
-    await bot.sendMessage(chatId, caption, {
-      parse_mode: 'HTML',
-      reply_markup: keyboard.reply_markup,
-    });
-  }
+  await sendProductPreview(chatId, product, data);
 }
 
 // ─── Admin: Products ─────────────────────────────────────────────────────────
@@ -541,9 +559,10 @@ async function showProductAdmin(chatId, productId) {
   const info =
     `📦 <b>${escapeHtml(p.name)}</b>\n` +
     `وضعیت: ${p.active ? '✅ فعال' : '❌ غیرفعال'}\n` +
-    `ترتیب: ${escapeHtml(p.order)}\n` +
+    `ایموجی: ${p.emoji || '—'}\n` +
+    `ترتیب: ${escapeHtml(String(p.order || 0))}\n` +
     `قیمت اصلی: ${escapeHtml(formatPrice(p.originalPrice))}\n` +
-    `قیمت فعلی: ${escapeHtml(formatPrice(p.price))}\n` +
+    `قیمت تخفیف: ${escapeHtml(formatPrice(p.price))}\n` +
     `توضیحات: ${escapeHtml(p.description || '—')}\n` +
     `تعداد مدیا: ${(p.media || []).length}\n` +
     `تعداد فایل: ${(p.files || []).length}`;
@@ -554,10 +573,10 @@ async function showProductAdmin(chatId, productId) {
   });
 }
 
-// ─── Admin: Add Product (Step by Step) ───────────────────────────────────────
+// ─── Admin: Add Product ───────────────────────────────────────────────────────
 function startAddProduct(chatId) {
   setAdminState(chatId, { step: 'add_name', data: {} });
-  bot.sendMessage(chatId, '📦 *افزودن محصول جدید*\n\nمرحله ۱/۷: نام محصول را وارد کنید:', {
+  bot.sendMessage(chatId, '📦 *افزودن محصول جدید*\n\nمرحله ۱/۸: نام محصول را وارد کنید:', {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'admin_products' }]] },
   });
@@ -567,6 +586,7 @@ function startAddProduct(chatId) {
 function startEditField(chatId, field, productId) {
   const fieldNames = {
     name: 'نام محصول',
+    emoji: 'ایموجی (یا بنویسید "بدون ایموجی")',
     desc: 'توضیحات محصول',
     prices: 'قیمت اصلی',
     order: 'ترتیب نمایش',
@@ -609,22 +629,40 @@ async function showAdminCard(chatId) {
   });
 }
 
-// ─── Admin: Header Media ─────────────────────────────────────────────────────
+// ─── Admin: Header Media (welcome page) ──────────────────────────────────────
 async function showAdminHeaderMedia(chatId) {
   const data = loadData();
   await bot.sendMessage(
     chatId,
-    `🖼 کاور صفحه محصولات\nتعداد مدیا: ${(data.headerMedia || []).length}\n\nعکس یا ویدیو ارسال کنید تا به عنوان کاور صفحه محصولات ذخیره شود.\nفقط اولین مورد در صفحه مشتری نمایش داده می‌شود.`,
+    `🖼 مدیای صفحه خوش‌آمد\nتعداد: ${(data.headerMedia || []).length}\n\nعکس یا ویدیو ارسال کنید:`,
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🗑 پاک کردن همه کاورها', callback_data: 'aheader_clear' }],
+          [{ text: '🗑 پاک کردن همه', callback_data: 'aheader_clear' }],
           [{ text: '🔙 بازگشت', callback_data: 'admin_back' }],
         ],
       },
     }
   );
   setAdminState(chatId, { step: 'header_media' });
+}
+
+// ─── Admin: Products Page Media ───────────────────────────────────────────────
+async function showAdminProductsMedia(chatId) {
+  const data = loadData();
+  await bot.sendMessage(
+    chatId,
+    `🖼 مدیای صفحه محصولات\nتعداد: ${(data.productsPageMedia || []).length}\n\nعکس یا ویدیو ارسال کنید:`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🗑 پاک کردن همه', callback_data: 'aproductsmedia_clear' }],
+          [{ text: '🔙 بازگشت', callback_data: 'admin_back' }],
+        ],
+      },
+    }
+  );
+  setAdminState(chatId, { step: 'products_page_media' });
 }
 
 // ─── Admin: Stats ────────────────────────────────────────────────────────────
@@ -667,7 +705,7 @@ async function showAdminBuyers(chatId) {
   const buyers = data.buyers || [];
 
   if (buyers.length === 0) {
-    await bot.sendMessage(chatId, '🛒 هیچ خریداری ثبت نشده است.', {
+    await bot.sendMessage(chatId, '🛒 هنوز خریداری ثبت نشده.', {
       reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_back' }]] },
     });
     return;
@@ -689,6 +727,25 @@ async function showAdminBuyers(chatId) {
       inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'admin_back' }]],
     },
   });
+}
+
+// ─── Extract media ───────────────────────────────────────────────────────────
+function extractMedia(msg) {
+  if (!msg) return null;
+  if (msg.photo && msg.photo.length > 0) {
+    const largest = msg.photo[msg.photo.length - 1];
+    return { type: 'photo', fileId: largest.file_id };
+  }
+  if (msg.video) {
+    return { type: 'video', fileId: msg.video.file_id, name: msg.video.file_name };
+  }
+  if (msg.document) {
+    return { type: 'document', fileId: msg.document.file_id, name: msg.document.file_name };
+  }
+  if (msg.audio) {
+    return { type: 'document', fileId: msg.audio.file_id, name: msg.audio.file_name };
+  }
+  return null;
 }
 
 // ─── Message Handler ─────────────────────────────────────────────────────────
@@ -720,27 +777,6 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    if (text === '🛍 مشاهده محصولات') {
-      await sendProductsPage(chatId);
-      return;
-    }
-
-    if (text === '📖 راهنمای استفاده') {
-      const data = loadData();
-      await bot.sendMessage(chatId, data.texts.guide, {
-        reply_markup: mainQuickLinksKeyboard().reply_markup,
-      });
-      return;
-    }
-
-    if (text === '📞 پشتیبانی') {
-      const data = loadData();
-      await bot.sendMessage(chatId, data.texts.support, {
-        reply_markup: mainQuickLinksKeyboard().reply_markup,
-      });
-      return;
-    }
-
     if (userPendingReceipt[userId]) {
       await handleReceiptFromUser(msg, userId);
       return;
@@ -757,17 +793,38 @@ async function handleAdminState(msg, state) {
   const step = state.step;
 
   try {
+    // ── Header media (welcome page) ──
     if (step === 'header_media') {
       const data = loadData();
       if (!data.headerMedia) data.headerMedia = [];
       const m = extractMedia(msg);
       if (m) {
-        data.headerMedia = [m];
+        data.headerMedia.push(m);
         saveData(data);
-        await bot.sendMessage(chatId, `✅ کاور صفحه محصولات ذخیره شد.`, {
+        await bot.sendMessage(chatId, `✅ مدیا اضافه شد (مجموع: ${data.headerMedia.length})`, {
           reply_markup: {
             inline_keyboard: [
-              [{ text: '🗑 پاک کردن کاور', callback_data: 'aheader_clear' }],
+              [{ text: '🗑 پاک کردن همه', callback_data: 'aheader_clear' }],
+              [{ text: '✅ اتمام', callback_data: 'admin_back' }],
+            ],
+          },
+        });
+      }
+      return;
+    }
+
+    // ── Products page media ──
+    if (step === 'products_page_media') {
+      const data = loadData();
+      if (!data.productsPageMedia) data.productsPageMedia = [];
+      const m = extractMedia(msg);
+      if (m) {
+        data.productsPageMedia.push(m);
+        saveData(data);
+        await bot.sendMessage(chatId, `✅ مدیا اضافه شد (مجموع: ${data.productsPageMedia.length})`, {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🗑 پاک کردن همه', callback_data: 'aproductsmedia_clear' }],
               [{ text: '✅ اتمام', callback_data: 'admin_back' }],
             ],
           },
@@ -777,24 +834,23 @@ async function handleAdminState(msg, state) {
     }
 
     if (step === 'add_name') {
-      if (!text.trim()) {
-        await bot.sendMessage(chatId, '⚠️ نام نمی‌تواند خالی باشد.');
-        return;
-      }
+      if (!text.trim()) { await bot.sendMessage(chatId, '⚠️ نام نمی‌تواند خالی باشد.'); return; }
       state.data.name = text.trim();
+      state.step = 'add_emoji';
+      await bot.sendMessage(chatId, 'مرحله ۲/۸: ایموجی محصول را بفرستید (یا «بدون ایموجی» بنویسید):', {
+        reply_markup: { inline_keyboard: [[{ text: '⏭ بدون ایموجی', callback_data: 'add_skip_emoji' }], [{ text: '❌ انصراف', callback_data: 'admin_products' }]] },
+      });
+      return;
+    }
+
+    if (step === 'add_emoji') {
+      state.data.emoji = text.trim() === 'بدون ایموجی' ? '' : text.trim();
       state.step = 'add_order';
-      await bot.sendMessage(chatId, 'مرحله ۲/۷: ترتیب نمایش را وارد کنید (عدد):', {
+      await bot.sendMessage(chatId, 'مرحله ۳/۸: ترتیب نمایش را وارد کنید (عدد):', {
         reply_markup: {
           inline_keyboard: [
-            [
-              { text: '1', callback_data: 'addorder_1' },
-              { text: '2', callback_data: 'addorder_2' },
-              { text: '3', callback_data: 'addorder_3' },
-            ],
-            [
-              { text: '4', callback_data: 'addorder_4' },
-              { text: '5', callback_data: 'addorder_5' },
-            ],
+            [{ text: '1', callback_data: 'addorder_1' }, { text: '2', callback_data: 'addorder_2' }, { text: '3', callback_data: 'addorder_3' }],
+            [{ text: '4', callback_data: 'addorder_4' }, { text: '5', callback_data: 'addorder_5' }],
             [{ text: '❌ انصراف', callback_data: 'admin_products' }],
           ],
         },
@@ -804,37 +860,28 @@ async function handleAdminState(msg, state) {
 
     if (step === 'add_order') {
       const n = parseInt(text, 10);
-      if (isNaN(n) || n < 1) {
-        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
-        return;
-      }
+      if (isNaN(n) || n < 1) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
       state.data.order = n;
       state.step = 'add_orig_price';
-      await bot.sendMessage(chatId, 'مرحله ۳/۷: قیمت اصلی (تومان):');
+      await bot.sendMessage(chatId, 'مرحله ۴/۸: قیمت اصلی (تومان):');
       return;
     }
 
     if (step === 'add_orig_price') {
       const n = parseInt(text.replace(/,/g, ''), 10);
-      if (isNaN(n)) {
-        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
-        return;
-      }
+      if (isNaN(n)) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
       state.data.originalPrice = n;
       state.step = 'add_price';
-      await bot.sendMessage(chatId, 'مرحله ۴/۷: قیمت تخفیف‌خورده (تومان):');
+      await bot.sendMessage(chatId, 'مرحله ۵/۸: قیمت تخفیف‌خورده (تومان): (اگه تخفیف نداره همان عدد قبلی رو وارد کن)');
       return;
     }
 
     if (step === 'add_price') {
       const n = parseInt(text.replace(/,/g, ''), 10);
-      if (isNaN(n)) {
-        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
-        return;
-      }
+      if (isNaN(n)) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
       state.data.price = n;
       state.step = 'add_desc';
-      await bot.sendMessage(chatId, 'مرحله ۵/۷: توضیحات محصول:');
+      await bot.sendMessage(chatId, 'مرحله ۶/۸: توضیحات محصول:');
       return;
     }
 
@@ -842,7 +889,7 @@ async function handleAdminState(msg, state) {
       state.data.description = text.trim();
       state.step = 'add_media';
       state.data.media = [];
-      await bot.sendMessage(chatId, 'مرحله ۶/۷: عکس یا ویدیوی کاور محصول را ارسال کنید (اختیاری):', {
+      await bot.sendMessage(chatId, 'مرحله ۷/۸: عکس یا ویدیوی محصول ارسال کنید (چند تا قابل ارساله):', {
         reply_markup: {
           inline_keyboard: [
             [{ text: '⏭ رد کردن (بدون مدیا)', callback_data: 'add_skip_media' }],
@@ -889,12 +936,22 @@ async function handleAdminState(msg, state) {
       if (!text.trim()) return;
       const data = loadData();
       const p = data.products.find(x => String(x.id) === String(state.productId));
+      if (p) { p.name = text.trim(); saveData(data); }
+      clearAdminState(chatId);
+      await bot.sendMessage(chatId, '✅ نام ذخیره شد.');
+      await showProductAdmin(chatId, state.productId);
+      return;
+    }
+
+    if (step === 'edit_emoji') {
+      const data = loadData();
+      const p = data.products.find(x => String(x.id) === String(state.productId));
       if (p) {
-        p.name = text.trim();
+        p.emoji = (text.trim() === 'بدون ایموجی' || text.trim() === '-') ? '' : text.trim();
         saveData(data);
       }
       clearAdminState(chatId);
-      await bot.sendMessage(chatId, '✅ نام محصول ذخیره شد.');
+      await bot.sendMessage(chatId, '✅ ایموجی ذخیره شد.');
       await showProductAdmin(chatId, state.productId);
       return;
     }
@@ -902,10 +959,7 @@ async function handleAdminState(msg, state) {
     if (step === 'edit_desc') {
       const data = loadData();
       const p = data.products.find(x => String(x.id) === String(state.productId));
-      if (p) {
-        p.description = text.trim();
-        saveData(data);
-      }
+      if (p) { p.description = text.trim(); saveData(data); }
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ توضیحات ذخیره شد.');
       await showProductAdmin(chatId, state.productId);
@@ -914,32 +968,19 @@ async function handleAdminState(msg, state) {
 
     if (step === 'edit_prices_orig') {
       const n = parseInt(text.replace(/,/g, ''), 10);
-      if (isNaN(n)) {
-        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
-        return;
-      }
+      if (isNaN(n)) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
       state.data.originalPrice = n;
       state.step = 'edit_prices_disc';
-      await bot.sendMessage(chatId, 'قیمت تخفیف‌خورده (تومان):');
+      await bot.sendMessage(chatId, 'قیمت تخفیف‌خورده (تومان): (اگه تخفیف نداره همان عدد قبلی رو وارد کن)');
       return;
     }
 
     if (step === 'edit_prices_disc') {
       const n = parseInt(text.replace(/,/g, ''), 10);
-      if (isNaN(n)) {
-        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
-        return;
-      }
+      if (isNaN(n)) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
       const data = loadData();
       const p = data.products.find(x => String(x.id) === String(state.productId));
-      if (p) {
-        p.originalPrice = state.data.originalPrice;
-        p.price = n;
-        if (Number(p.originalPrice) > Number(p.price) && !p.discountEndsAt) {
-          p.discountEndsAt = Date.now() + DAY_MS;
-        }
-        saveData(data);
-      }
+      if (p) { p.originalPrice = state.data.originalPrice; p.price = n; saveData(data); }
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ قیمت‌ها ذخیره شدند.');
       await showProductAdmin(chatId, state.productId);
@@ -948,16 +989,10 @@ async function handleAdminState(msg, state) {
 
     if (step === 'edit_order') {
       const n = parseInt(text, 10);
-      if (isNaN(n) || n < 1) {
-        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
-        return;
-      }
+      if (isNaN(n) || n < 1) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
       const data = loadData();
       const p = data.products.find(x => String(x.id) === String(state.productId));
-      if (p) {
-        p.order = n;
-        saveData(data);
-      }
+      if (p) { p.order = n; saveData(data); }
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ ترتیب ذخیره شد.');
       await showProductAdmin(chatId, state.productId);
@@ -969,11 +1004,7 @@ async function handleAdminState(msg, state) {
       if (m) {
         const data = loadData();
         const p = data.products.find(x => String(x.id) === String(state.productId));
-        if (p) {
-          p.media = p.media || [];
-          p.media.push(m);
-          saveData(data);
-        }
+        if (p) { p.media = p.media || []; p.media.push(m); saveData(data); }
         await bot.sendMessage(chatId, `✅ مدیا اضافه شد.`, {
           reply_markup: {
             inline_keyboard: [
@@ -992,11 +1023,7 @@ async function handleAdminState(msg, state) {
       if (m) {
         const data = loadData();
         const p = data.products.find(x => String(x.id) === String(state.productId));
-        if (p) {
-          p.files = p.files || [];
-          p.files.push(m);
-          saveData(data);
-        }
+        if (p) { p.files = p.files || []; p.files.push(m); saveData(data); }
         await bot.sendMessage(chatId, `✅ فایل اضافه شد.`, {
           reply_markup: {
             inline_keyboard: [
@@ -1047,25 +1074,6 @@ async function handleAdminState(msg, state) {
   }
 }
 
-// ─── Extract media from message ──────────────────────────────────────────────
-function extractMedia(msg) {
-  if (!msg) return null;
-  if (msg.photo && msg.photo.length > 0) {
-    const largest = msg.photo[msg.photo.length - 1];
-    return { type: 'photo', fileId: largest.file_id };
-  }
-  if (msg.video) {
-    return { type: 'video', fileId: msg.video.file_id, name: msg.video.file_name };
-  }
-  if (msg.document) {
-    return { type: 'document', fileId: msg.document.file_id, name: msg.document.file_name };
-  }
-  if (msg.audio) {
-    return { type: 'document', fileId: msg.audio.file_id, name: msg.audio.file_name };
-  }
-  return null;
-}
-
 // ─── Receipt Handler ─────────────────────────────────────────────────────────
 async function handleReceiptFromUser(msg, userId) {
   const chatId = msg.chat.id;
@@ -1091,7 +1099,7 @@ async function handleReceiptFromUser(msg, userId) {
     `👤 نام: ${firstName}\n` +
     `🔗 یوزرنیم: ${username}\n` +
     `🆔 آیدی: ${uid}\n` +
-    `📦 محصول انتخاب‌شده: ${product ? product.name : 'نامشخص'}\n` +
+    `📦 محصول: ${product ? product.name : 'نامشخص'}\n` +
     `📅 زمان: ${now}\n` +
     `📎 نوع: ${fileType}\n` +
     `💬 متن: ${msg.text || msg.caption || '—'}`;
@@ -1103,9 +1111,8 @@ async function handleReceiptFromUser(msg, userId) {
   }
 
   await bot.sendMessage(ADMIN_CHAT_ID, reportText, receiptAdminKeyboard(uid, productId || 'none'));
-  await bot.sendMessage(chatId, '✅ رسید شما دریافت شد. پس از بررسی، نتیجه اعلام می‌شود.', {
-    reply_markup: mainQuickLinksKeyboard().reply_markup,
-  });
+  // Confirm to user — single message, no separate keyboard
+  await bot.sendMessage(chatId, '✅ رسیدتون دریافت شد! بعد از بررسی خبرتون می‌دیم 🙏', mainQuickLinksKeyboard());
 }
 
 // ─── Callback Query Handler ──────────────────────────────────────────────────
@@ -1121,28 +1128,26 @@ bot.on('callback_query', async (query) => {
 
     // ─── Quick links ───
     if (data_str === 'quick_products') {
-      await sendProductsPage(chatId);
+      const data = loadData();
+      await handleProducts(chatId, data);
       return;
     }
 
     if (data_str === 'quick_guide') {
       const data = loadData();
-      await bot.sendMessage(chatId, data.texts.guide, {
-        reply_markup: mainQuickLinksKeyboard().reply_markup,
-      });
+      await bot.sendMessage(chatId, data.texts.guide, mainQuickLinksKeyboard());
       return;
     }
 
     if (data_str === 'quick_support') {
       const data = loadData();
-      await bot.sendMessage(chatId, data.texts.support, {
-        reply_markup: mainQuickLinksKeyboard().reply_markup,
-      });
+      await bot.sendMessage(chatId, data.texts.support, mainQuickLinksKeyboard());
       return;
     }
 
     if (data_str === 'quick_back') {
-      await sendUserHome(chatId);
+      const data = loadData();
+      await bot.sendMessage(chatId, data.texts.welcome, mainQuickLinksKeyboard());
       return;
     }
 
@@ -1165,13 +1170,11 @@ bot.on('callback_query', async (query) => {
 
     if (data_str === 'cancel_receipt') {
       delete userPendingReceipt[userId];
-      await bot.sendMessage(chatId, '❌ ارسال رسید لغو شد.', {
-        reply_markup: mainQuickLinksKeyboard().reply_markup,
-      });
+      await bot.sendMessage(chatId, '❌ ارسال رسید لغو شد.', mainQuickLinksKeyboard());
       return;
     }
 
-    // ─── Admin callbacks ───
+    // ─── Admin only from here ───
     if (!isAdmin(chatId)) return;
 
     if (data_str === 'admin_back') {
@@ -1200,6 +1203,11 @@ bot.on('callback_query', async (query) => {
 
     if (data_str === 'admin_header_media') {
       await showAdminHeaderMedia(chatId);
+      return;
+    }
+
+    if (data_str === 'admin_products_media') {
+      await showAdminProductsMedia(chatId);
       return;
     }
 
@@ -1239,13 +1247,22 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // ─── Header media ───
+    // ─── Header media clear ───
     if (data_str === 'aheader_clear') {
       const data = loadData();
       data.headerMedia = [];
       saveData(data);
       clearAdminState(chatId);
-      await bot.sendMessage(chatId, '✅ کاور صفحه محصولات پاک شد.', adminMenuKeyboard());
+      await bot.sendMessage(chatId, '✅ هدر مدیا پاک شد.', adminMenuKeyboard());
+      return;
+    }
+
+    if (data_str === 'aproductsmedia_clear') {
+      const data = loadData();
+      data.productsPageMedia = [];
+      saveData(data);
+      clearAdminState(chatId);
+      await bot.sendMessage(chatId, '✅ مدیای صفحه محصولات پاک شد.', adminMenuKeyboard());
       return;
     }
 
@@ -1263,13 +1280,31 @@ bot.on('callback_query', async (query) => {
     }
 
     // ─── Add product callbacks ───
+    if (data_str === 'add_skip_emoji') {
+      const state = getAdminState(chatId);
+      if (state && (state.step === 'add_emoji')) {
+        state.data.emoji = '';
+        state.step = 'add_order';
+        await bot.sendMessage(chatId, 'مرحله ۳/۸: ترتیب نمایش را وارد کنید (عدد):', {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '1', callback_data: 'addorder_1' }, { text: '2', callback_data: 'addorder_2' }, { text: '3', callback_data: 'addorder_3' }],
+              [{ text: '4', callback_data: 'addorder_4' }, { text: '5', callback_data: 'addorder_5' }],
+              [{ text: '❌ انصراف', callback_data: 'admin_products' }],
+            ],
+          },
+        });
+      }
+      return;
+    }
+
     if (data_str.startsWith('addorder_')) {
       const n = parseInt(data_str.replace('addorder_', ''), 10);
       const state = getAdminState(chatId);
       if (state && state.step === 'add_order') {
         state.data.order = n;
         state.step = 'add_orig_price';
-        await bot.sendMessage(chatId, `ترتیب انتخاب شد: ${n}\n\nمرحله ۳/۷: قیمت اصلی (تومان):`);
+        await bot.sendMessage(chatId, `ترتیب انتخاب شد: ${n}\n\nمرحله ۴/۸: قیمت اصلی (تومان):`);
       }
       return;
     }
@@ -1279,7 +1314,7 @@ bot.on('callback_query', async (query) => {
       if (!state) return;
       state.step = 'add_files';
       state.data.files = [];
-      await bot.sendMessage(chatId, 'مرحله ۷/۷: فایل‌های دانلودی محصول را ارسال کنید:', {
+      await bot.sendMessage(chatId, 'مرحله ۸/۸: فایل‌های دانلودی محصول را ارسال کنید:', {
         reply_markup: {
           inline_keyboard: [
             [{ text: '⏭ رد کردن (بدون فایل)', callback_data: 'add_done_files' }],
@@ -1297,6 +1332,7 @@ bot.on('callback_query', async (query) => {
       const newProduct = {
         id: `prod_${Date.now()}`,
         name: state.data.name || 'بدون نام',
+        emoji: state.data.emoji || '',
         description: state.data.description || '',
         originalPrice: state.data.originalPrice || 0,
         price: state.data.price || 0,
@@ -1305,9 +1341,6 @@ bot.on('callback_query', async (query) => {
         media: state.data.media || [],
         files: state.data.files || [],
       };
-      if (Number(newProduct.originalPrice) > Number(newProduct.price) && !newProduct.discountEndsAt) {
-        newProduct.discountEndsAt = Date.now() + DAY_MS;
-      }
       data.products.push(newProduct);
       saveData(data);
       clearAdminState(chatId);
@@ -1316,16 +1349,23 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // ─── Edit product ───
+    // ─── Edit product field ───
     if (data_str.startsWith('ape_name_')) {
-      const productId = data_str.replace('ape_name_', '');
-      startEditField(chatId, 'name', productId);
+      startEditField(chatId, 'name', data_str.replace('ape_name_', ''));
+      return;
+    }
+
+    if (data_str.startsWith('ape_emoji_')) {
+      const productId = data_str.replace('ape_emoji_', '');
+      setAdminState(chatId, { step: 'edit_emoji', productId, data: {} });
+      await bot.sendMessage(chatId, 'ایموجی جدید را بفرستید (یا «بدون ایموجی» یا «-» بنویسید):', {
+        reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: `ap_view_${productId}` }]] },
+      });
       return;
     }
 
     if (data_str.startsWith('ape_desc_')) {
-      const productId = data_str.replace('ape_desc_', '');
-      startEditField(chatId, 'desc', productId);
+      startEditField(chatId, 'desc', data_str.replace('ape_desc_', ''));
       return;
     }
 
@@ -1344,15 +1384,8 @@ bot.on('callback_query', async (query) => {
       await bot.sendMessage(chatId, 'ترتیب جدید را وارد کنید:', {
         reply_markup: {
           inline_keyboard: [
-            [
-              { text: '1', callback_data: `setorder_${productId}_1` },
-              { text: '2', callback_data: `setorder_${productId}_2` },
-              { text: '3', callback_data: `setorder_${productId}_3` },
-            ],
-            [
-              { text: '4', callback_data: `setorder_${productId}_4` },
-              { text: '5', callback_data: `setorder_${productId}_5` },
-            ],
+            [{ text: '1', callback_data: `setorder_${productId}_1` }, { text: '2', callback_data: `setorder_${productId}_2` }, { text: '3', callback_data: `setorder_${productId}_3` }],
+            [{ text: '4', callback_data: `setorder_${productId}_4` }, { text: '5', callback_data: `setorder_${productId}_5` }],
             [{ text: '❌ انصراف', callback_data: `ap_view_${productId}` }],
           ],
         },
@@ -1366,10 +1399,7 @@ bot.on('callback_query', async (query) => {
       const n = parseInt(parts[2], 10);
       const data = loadData();
       const p = data.products.find(x => String(x.id) === String(productId));
-      if (p) {
-        p.order = n;
-        saveData(data);
-      }
+      if (p) { p.order = n; saveData(data); }
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ ترتیب ذخیره شد.');
       await showProductAdmin(chatId, productId);
@@ -1377,14 +1407,12 @@ bot.on('callback_query', async (query) => {
     }
 
     if (data_str.startsWith('ape_media_')) {
-      const productId = data_str.replace('ape_media_', '');
-      startEditField(chatId, 'media', productId);
+      startEditField(chatId, 'media', data_str.replace('ape_media_', ''));
       return;
     }
 
     if (data_str.startsWith('ape_files_')) {
-      const productId = data_str.replace('ape_files_', '');
-      startEditField(chatId, 'files', productId);
+      startEditField(chatId, 'files', data_str.replace('ape_files_', ''));
       return;
     }
 
@@ -1392,10 +1420,7 @@ bot.on('callback_query', async (query) => {
       const productId = data_str.replace('ape_clear_media_', '');
       const data = loadData();
       const p = data.products.find(x => String(x.id) === String(productId));
-      if (p) {
-        p.media = [];
-        saveData(data);
-      }
+      if (p) { p.media = []; saveData(data); }
       await bot.sendMessage(chatId, '✅ مدیاهای محصول پاک شدند.');
       startEditField(chatId, 'media', productId);
       return;
@@ -1405,10 +1430,7 @@ bot.on('callback_query', async (query) => {
       const productId = data_str.replace('ape_clear_files_', '');
       const data = loadData();
       const p = data.products.find(x => String(x.id) === String(productId));
-      if (p) {
-        p.files = [];
-        saveData(data);
-      }
+      if (p) { p.files = []; saveData(data); }
       await bot.sendMessage(chatId, '✅ فایل‌های محصول پاک شدند.');
       startEditField(chatId, 'files', productId);
       return;
@@ -1434,10 +1456,7 @@ bot.on('callback_query', async (query) => {
       const productId = data_str.replace('ape_toggle_', '');
       const data = loadData();
       const p = data.products.find(x => String(x.id) === String(productId));
-      if (p) {
-        p.active = !p.active;
-        saveData(data);
-      }
+      if (p) { p.active = !p.active; saveData(data); }
       await bot.sendMessage(chatId, `✅ وضعیت محصول: ${p && p.active ? 'فعال ✅' : 'غیرفعال ❌'}`);
       await showProductAdmin(chatId, productId);
       return;
@@ -1500,10 +1519,7 @@ bot.on('callback_query', async (query) => {
     if (data_str.startsWith('receipt_send_')) {
       const payload = data_str.slice('receipt_send_'.length);
       const firstUnderscore = payload.indexOf('_');
-      if (firstUnderscore === -1) {
-        await bot.sendMessage(chatId, '⚠️ داده نامعتبر است.');
-        return;
-      }
+      if (firstUnderscore === -1) { await bot.sendMessage(chatId, '⚠️ داده نامعتبر است.'); return; }
 
       const targetUserId = payload.slice(0, firstUnderscore);
       const productId = payload.slice(firstUnderscore + 1);
@@ -1515,15 +1531,10 @@ bot.on('callback_query', async (query) => {
 
       const data = loadData();
       const product = data.products.find(p => String(p.id) === String(productId));
-      if (!product) {
-        await bot.sendMessage(chatId, '❌ محصول یافت نشد.');
-        return;
-      }
+      if (!product) { await bot.sendMessage(chatId, '❌ محصول یافت نشد.'); return; }
 
       await sendProductFiles(targetUserId, product);
-      await bot.sendMessage(targetUserId, data.texts.paymentConfirm, {
-        reply_markup: mainQuickLinksKeyboard().reply_markup,
-      });
+      await bot.sendMessage(targetUserId, data.texts.paymentConfirm);
       trackSale(data, targetUserId, productId, '', '');
       saveData(data);
       await bot.sendMessage(chatId, `✅ فایل‌های «${product.name}» برای کاربر ارسال شدند.`);
@@ -1540,25 +1551,17 @@ bot.on('callback_query', async (query) => {
     if (data_str.startsWith('sendother_')) {
       const payload = data_str.slice('sendother_'.length);
       const firstUnderscore = payload.indexOf('_');
-      if (firstUnderscore === -1) {
-        await bot.sendMessage(chatId, '⚠️ داده نامعتبر است.');
-        return;
-      }
+      if (firstUnderscore === -1) { await bot.sendMessage(chatId, '⚠️ داده نامعتبر است.'); return; }
 
       const targetUserId = payload.slice(0, firstUnderscore);
       const productId = payload.slice(firstUnderscore + 1);
 
       const data = loadData();
       const product = data.products.find(p => String(p.id) === String(productId));
-      if (!product) {
-        await bot.sendMessage(chatId, '❌ محصول یافت نشد.');
-        return;
-      }
+      if (!product) { await bot.sendMessage(chatId, '❌ محصول یافت نشد.'); return; }
 
       await sendProductFiles(targetUserId, product);
-      await bot.sendMessage(targetUserId, data.texts.paymentConfirm, {
-        reply_markup: mainQuickLinksKeyboard().reply_markup,
-      });
+      await bot.sendMessage(targetUserId, data.texts.paymentConfirm);
       trackSale(data, targetUserId, productId, '', '');
       saveData(data);
       await bot.sendMessage(chatId, `✅ فایل‌های «${product.name}» برای کاربر ارسال شدند.`);
@@ -1568,21 +1571,17 @@ bot.on('callback_query', async (query) => {
     if (data_str.startsWith('receipt_reject_')) {
       const targetUserId = data_str.replace('receipt_reject_', '');
       const data = loadData();
-      await bot.sendMessage(targetUserId, data.texts.paymentReject, {
-        reply_markup: mainQuickLinksKeyboard().reply_markup,
-      });
+      await bot.sendMessage(targetUserId, data.texts.paymentReject);
       await bot.sendMessage(chatId, '✅ پیام رد پرداخت ارسال شد.');
       return;
     }
   } catch (e) {
     console.error('Callback error:', e);
-    try {
-      await bot.sendMessage(chatId, '⚠️ خطایی رخ داد. دوباره تلاش کنید.');
-    } catch (_) {}
+    try { await bot.sendMessage(chatId, '⚠️ خطایی رخ داد. دوباره تلاش کنید.'); } catch (_) {}
   }
 });
 
-// ─── Backup ───────────────────────────────────────────────────────────────────
+// ─── Backup ──────────────────────────────────────────────────────────────────
 async function sendBackup(chatId) {
   try {
     if (!fs.existsSync(DATA_PATH)) {
@@ -1596,17 +1595,9 @@ async function sendBackup(chatId) {
   }
 }
 
-// ─── Error Handler ────────────────────────────────────────────────────────────
-bot.on('polling_error', (err) => {
-  console.error('Polling error:', err.message);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err);
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection:', reason);
-});
+// ─── Error Handlers ──────────────────────────────────────────────────────────
+bot.on('polling_error', (err) => { console.error('Polling error:', err.message); });
+process.on('uncaughtException', (err) => { console.error('Uncaught exception:', err); });
+process.on('unhandledRejection', (reason) => { console.error('Unhandled rejection:', reason); });
 
 console.log('🤖 ربات فروش فایل در حال اجرا...');
