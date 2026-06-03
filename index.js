@@ -51,6 +51,18 @@ function ensureDataDir() {
   }
 }
 
+function deepMerge(target, source) {
+  for (const key in source) {
+    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      if (!target[key]) target[key] = {};
+      deepMerge(target[key], source[key]);
+    } else {
+      target[key] = source[key];
+    }
+  }
+  return target;
+}
+
 function loadData() {
   try {
     ensureDataDir();
@@ -60,7 +72,6 @@ function loadData() {
     }
     const raw = fs.readFileSync(DATA_PATH, 'utf8');
     const parsed = JSON.parse(raw);
-    // Deep merge with defaults to fill missing fields
     return deepMerge(JSON.parse(JSON.stringify(DEFAULT_DATA)), parsed);
   } catch (e) {
     console.error('Error loading data:', e);
@@ -75,18 +86,6 @@ function saveData(data) {
   } catch (e) {
     console.error('Error saving data:', e);
   }
-}
-
-function deepMerge(target, source) {
-  for (const key in source) {
-    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
-      if (!target[key]) target[key] = {};
-      deepMerge(target[key], source[key]);
-    } else {
-      target[key] = source[key];
-    }
-  }
-  return target;
 }
 
 function resetAllData() {
@@ -104,10 +103,10 @@ function resetAllData() {
 // ─── Bot Init ───────────────────────────────────────────────────────────────
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// ─── State Management ────────────────────────────────────────────────────────
-const adminStates = {}; // adminStates[chatId] = { step, data }
-const userLastProduct = {}; // userLastProduct[userId] = productId
-const userPendingReceipt = {}; // userPendingReceipt[userId] = true/false
+// ─── State Management ───────────────────────────────────────────────────────
+const adminStates = {};
+const userLastProduct = {};
+const userPendingReceipt = {};
 
 function setAdminState(chatId, state) {
   adminStates[chatId] = state;
@@ -119,7 +118,7 @@ function clearAdminState(chatId) {
   delete adminStates[chatId];
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 function isAdmin(chatId) {
   return String(chatId) === String(ADMIN_CHAT_ID);
 }
@@ -129,8 +128,17 @@ function todayKey() {
 }
 
 function formatPrice(n) {
-  if (!n && n !== 0) return '—';
+  if (n === undefined || n === null || n === '') return '—';
   return Number(n).toLocaleString('fa-IR') + ' تومان';
+}
+
+function escapeHtml(text = '') {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function sortedProducts(products) {
@@ -142,7 +150,6 @@ function activeProducts(products) {
 }
 
 // ─── Keyboards ───────────────────────────────────────────────────────────────
-
 function mainMenuKeyboard() {
   return {
     reply_markup: {
@@ -151,6 +158,22 @@ function mainMenuKeyboard() {
         [{ text: '📖 راهنمای استفاده' }, { text: '📞 پشتیبانی' }],
       ],
       resize_keyboard: true,
+    },
+  };
+}
+
+function mainQuickLinksKeyboard() {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '🛍 محصولات', callback_data: 'quick_products' },
+          { text: '📖 راهنما', callback_data: 'quick_guide' },
+        ],
+        [
+          { text: '📞 پشتیبانی', callback_data: 'quick_support' },
+        ],
+      ],
     },
   };
 }
@@ -176,23 +199,14 @@ function productsListKeyboard(products) {
   const active = activeProducts(products);
   if (active.length === 0) return null;
 
-  // Group by order
-  const groups = {};
-  for (const p of active) {
-    const key = p.order || 0;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(p);
-  }
-
-  const rows = [];
-  const keys = Object.keys(groups).sort((a, b) => Number(a) - Number(b));
-  for (const k of keys) {
-    const row = groups[k].map(p => ({
-      text: `${p.name} | ${formatPrice(p.price)}`,
+  const rows = active.map(p => ([
+    {
+      text: `🧊 ${p.name} | ${formatPrice(p.price)}`,
       callback_data: `product_${p.id}`,
-    }));
-    rows.push(row);
-  }
+    },
+  ]));
+
+  rows.push([{ text: '🔙 بازگشت به منو', callback_data: 'quick_back' }]);
 
   return { reply_markup: { inline_keyboard: rows } };
 }
@@ -262,10 +276,11 @@ function selectProductForUserKeyboard(products, userId) {
   const rows = sorted.map(p => [
     { text: p.name, callback_data: `sendother_${userId}_${p.id}` },
   ]);
+  rows.push([{ text: '🔙 انصراف', callback_data: 'admin_back' }]);
   return { reply_markup: { inline_keyboard: rows } };
 }
 
-// ─── Stat Helpers ─────────────────────────────────────────────────────────────
+// ─── Stat Helpers ───────────────────────────────────────────────────────────
 function trackStart(data, userId) {
   data.stats.starts = (data.stats.starts || 0) + 1;
   if (!data.stats.uniqueUsers) data.stats.uniqueUsers = [];
@@ -303,7 +318,7 @@ function trackSale(data, userId, productId, username, firstName) {
   });
 }
 
-// ─── Send Helpers ─────────────────────────────────────────────────────────────
+// ─── Send Helpers ───────────────────────────────────────────────────────────
 async function sendMediaGroup(chatId, mediaItems) {
   for (const m of mediaItems) {
     try {
@@ -336,8 +351,97 @@ async function sendProductFiles(chatId, product) {
   }
 }
 
-// ─── User Flows ───────────────────────────────────────────────────────────────
+function buildProductCaption(product, data) {
+  const desc = (product.description || '').trim();
+  const shortDesc = desc.length > 700 ? `${desc.slice(0, 700)}…` : desc;
 
+  return (
+    `📦 <b>${escapeHtml(product.name)}</b>\n\n` +
+    `${escapeHtml(shortDesc || '—')}\n\n` +
+    `💰 قیمت اصلی: <s>${escapeHtml(formatPrice(product.originalPrice))}</s>\n` +
+    `🏷 قیمت ویژه: <b>${escapeHtml(formatPrice(product.price))}</b>\n\n` +
+    `💳 شماره کارت: <code>${escapeHtml(data.card.number)}</code>\n` +
+    `👤 صاحب حساب: ${escapeHtml(data.card.owner)}\n\n` +
+    `${escapeHtml(data.texts.sendReceipt)}`
+  );
+}
+
+async function sendProductPreview(chatId, product, data) {
+  const caption = buildProductCaption(product, data);
+  const media = product.media || [];
+
+  if (!media.length) {
+    await bot.sendMessage(chatId, caption, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }]],
+      },
+    });
+    return;
+  }
+
+  const first = media[0];
+  const rest = media.slice(1);
+
+  try {
+    if (first.type === 'photo') {
+      await bot.sendPhoto(chatId, first.fileId, {
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }]],
+        },
+      });
+    } else if (first.type === 'video') {
+      await bot.sendVideo(chatId, first.fileId, {
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }]],
+        },
+      });
+    } else if (first.type === 'document') {
+      await bot.sendDocument(chatId, first.fileId, {
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }]],
+        },
+      });
+    } else {
+      await bot.sendMessage(chatId, caption, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }]],
+        },
+      });
+    }
+  } catch (e) {
+    console.error('Send preview error:', e.message);
+    await bot.sendMessage(chatId, caption, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${product.id}` }]],
+      },
+    });
+  }
+
+  for (const m of rest) {
+    try {
+      if (m.type === 'photo') {
+        await bot.sendPhoto(chatId, m.fileId);
+      } else if (m.type === 'video') {
+        await bot.sendVideo(chatId, m.fileId);
+      } else if (m.type === 'document') {
+        await bot.sendDocument(chatId, m.fileId, {}, { filename: m.name || 'file' });
+      }
+    } catch (e) {
+      console.error('Send media error:', e.message);
+    }
+  }
+}
+
+// ─── User Flows ─────────────────────────────────────────────────────────────
 async function handleStart(msg) {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
@@ -352,10 +456,10 @@ async function handleStart(msg) {
   }
 
   await bot.sendMessage(chatId, data.texts.welcome, mainMenuKeyboard());
+  await bot.sendMessage(chatId, '🔗 دسترسی سریع:', mainQuickLinksKeyboard());
 }
 
 async function handleProducts(chatId, data) {
-  // Send header media first
   if (data.headerMedia && data.headerMedia.length > 0) {
     await sendMediaGroup(chatId, data.headerMedia);
   }
@@ -365,47 +469,27 @@ async function handleProducts(chatId, data) {
     await bot.sendMessage(chatId, data.texts.noProduct, mainMenuKeyboard());
     return;
   }
+
   await bot.sendMessage(chatId, '📦 محصولات موجود:', keyboard);
 }
 
 async function handleProductView(chatId, productId, userId) {
   const data = loadData();
-  const product = data.products.find(p => p.id === productId);
+  const product = data.products.find(p => String(p.id) === String(productId));
+
   if (!product || !product.active) {
     await bot.sendMessage(chatId, '❌ محصول یافت نشد.');
     return;
   }
 
-  // Track last viewed product
   userLastProduct[userId] = productId;
   trackProductClick(data, productId);
   saveData(data);
 
-  // Send media
-  if (product.media && product.media.length > 0) {
-    await sendMediaGroup(chatId, product.media);
-  }
-
-  // Product info
-  const text =
-    `📦 *${product.name}*\n\n` +
-    `${product.description || ''}\n\n` +
-    `💰 قیمت اصلی: ~${formatPrice(product.originalPrice)}~\n` +
-    `🏷 قیمت ویژه: *${formatPrice(product.price)}*\n\n` +
-    `💳 شماره کارت: \`${data.card.number}\`\n` +
-    `👤 صاحب حساب: ${data.card.owner}\n\n` +
-    `${data.texts.sendReceipt}`;
-
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [[{ text: '📤 ارسال رسید پرداخت', callback_data: `send_receipt_${productId}` }]],
-    },
-  });
+  await sendProductPreview(chatId, product, data);
 }
 
-// ─── Admin: Products ──────────────────────────────────────────────────────────
-
+// ─── Admin: Products ─────────────────────────────────────────────────────────
 async function showAdminProducts(chatId) {
   const data = loadData();
   const kb = adminProductsKeyboard(data.products);
@@ -414,28 +498,28 @@ async function showAdminProducts(chatId) {
 
 async function showProductAdmin(chatId, productId) {
   const data = loadData();
-  const p = data.products.find(x => x.id === productId);
+  const p = data.products.find(x => String(x.id) === String(productId));
   if (!p) {
     await bot.sendMessage(chatId, '❌ محصول یافت نشد.');
     return;
   }
   const info =
-    `📦 *${p.name}*\n` +
+    `📦 <b>${escapeHtml(p.name)}</b>\n` +
     `وضعیت: ${p.active ? '✅ فعال' : '❌ غیرفعال'}\n` +
-    `ترتیب: ${p.order}\n` +
-    `قیمت اصلی: ${formatPrice(p.originalPrice)}\n` +
-    `قیمت تخفیف: ${formatPrice(p.price)}\n` +
-    `توضیحات: ${p.description || '—'}\n` +
+    `ترتیب: ${escapeHtml(p.order)}\n` +
+    `قیمت اصلی: ${escapeHtml(formatPrice(p.originalPrice))}\n` +
+    `قیمت تخفیف: ${escapeHtml(formatPrice(p.price))}\n` +
+    `توضیحات: ${escapeHtml(p.description || '—')}\n` +
     `تعداد مدیا: ${(p.media || []).length}\n` +
     `تعداد فایل: ${(p.files || []).length}`;
+
   await bot.sendMessage(chatId, info, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     ...adminProductActionsKeyboard(productId),
   });
 }
 
 // ─── Admin: Add Product (Step by Step) ───────────────────────────────────────
-
 function startAddProduct(chatId) {
   setAdminState(chatId, { step: 'add_name', data: {} });
   bot.sendMessage(chatId, '📦 *افزودن محصول جدید*\n\nمرحله ۱/۷: نام محصول را وارد کنید:', {
@@ -444,8 +528,7 @@ function startAddProduct(chatId) {
   });
 }
 
-// ─── Admin: Edit Product ──────────────────────────────────────────────────────
-
+// ─── Admin: Edit Product ─────────────────────────────────────────────────────
 function startEditField(chatId, field, productId) {
   const fieldNames = {
     name: 'نام محصول',
@@ -472,14 +555,12 @@ function startEditField(chatId, field, productId) {
   });
 }
 
-// ─── Admin: Texts ─────────────────────────────────────────────────────────────
-
+// ─── Admin: Texts ────────────────────────────────────────────────────────────
 async function showAdminTexts(chatId) {
   await bot.sendMessage(chatId, '✏️ ویرایش متون ربات:', adminTextsKeyboard());
 }
 
-// ─── Admin: Card ──────────────────────────────────────────────────────────────
-
+// ─── Admin: Card ─────────────────────────────────────────────────────────────
 async function showAdminCard(chatId) {
   const data = loadData();
   await bot.sendMessage(chatId, `💳 تنظیمات کارت:\n\nشماره: ${data.card.number}\nصاحب: ${data.card.owner}`, {
@@ -493,8 +574,7 @@ async function showAdminCard(chatId) {
   });
 }
 
-// ─── Admin: Header Media ──────────────────────────────────────────────────────
-
+// ─── Admin: Header Media ─────────────────────────────────────────────────────
 async function showAdminHeaderMedia(chatId) {
   const data = loadData();
   await bot.sendMessage(
@@ -512,8 +592,7 @@ async function showAdminHeaderMedia(chatId) {
   setAdminState(chatId, { step: 'header_media' });
 }
 
-// ─── Admin: Stats ─────────────────────────────────────────────────────────────
-
+// ─── Admin: Stats ────────────────────────────────────────────────────────────
 async function showAdminStats(chatId) {
   const data = loadData();
   const s = data.stats || {};
@@ -547,8 +626,7 @@ async function showAdminStats(chatId) {
   });
 }
 
-// ─── Admin: Buyers ────────────────────────────────────────────────────────────
-
+// ─── Admin: Buyers ───────────────────────────────────────────────────────────
 async function showAdminBuyers(chatId) {
   const data = loadData();
   const buyers = data.buyers || [];
@@ -563,8 +641,8 @@ async function showAdminBuyers(chatId) {
   const last20 = buyers.slice(-20).reverse();
   let text = `🛒 آمار خریداران (${buyers.length} نفر):\n\n`;
   for (const b of last20) {
-    const p = data.products.find(x => x.id === b.productId);
-    text += `👤 ${b.firstName} (@${b.username})\n`;
+    const p = data.products.find(x => String(x.id) === String(b.productId));
+    text += `👤 ${b.firstName} (${b.username})\n`;
     text += `📦 ${p ? p.name : b.productId}\n`;
     text += `📅 ${new Date(b.date).toLocaleDateString('fa-IR')}\n`;
     text += '─────────────\n';
@@ -578,8 +656,7 @@ async function showAdminBuyers(chatId) {
   });
 }
 
-// ─── Message Handler ──────────────────────────────────────────────────────────
-
+// ─── Message Handler ─────────────────────────────────────────────────────────
 bot.on('message', async (msg) => {
   if (!msg || !msg.chat) return;
   const chatId = msg.chat.id;
@@ -587,7 +664,6 @@ bot.on('message', async (msg) => {
   const text = msg.text || '';
 
   try {
-    // ── Admin state machine ──
     if (isAdmin(chatId)) {
       const state = getAdminState(chatId);
 
@@ -601,11 +677,9 @@ bot.on('message', async (msg) => {
         return;
       }
 
-      // Admin shortcut: if admin sends /start show admin panel
       if (text.startsWith('/')) return;
     }
 
-    // ── User flows ──
     if (text === '/start') {
       await handleStart(msg);
       return;
@@ -629,26 +703,22 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // ── Receipt handling (user sends anything after clicking send_receipt) ──
     if (userPendingReceipt[userId]) {
       await handleReceiptFromUser(msg, userId);
       return;
     }
-
   } catch (e) {
     console.error('Message handler error:', e);
   }
 });
 
-// ─── Admin State Machine ───────────────────────────────────────────────────────
-
+// ─── Admin State Machine ─────────────────────────────────────────────────────
 async function handleAdminState(msg, state) {
   const chatId = msg.chat.id;
   const text = msg.text || '';
   const step = state.step;
 
   try {
-    // ─── Header media collection ───
     if (step === 'header_media') {
       const data = loadData();
       if (!data.headerMedia) data.headerMedia = [];
@@ -668,16 +738,25 @@ async function handleAdminState(msg, state) {
       return;
     }
 
-    // ─── Add product steps ───
     if (step === 'add_name') {
-      if (!text.trim()) { await bot.sendMessage(chatId, '⚠️ نام نمی‌تواند خالی باشد.'); return; }
+      if (!text.trim()) {
+        await bot.sendMessage(chatId, '⚠️ نام نمی‌تواند خالی باشد.');
+        return;
+      }
       state.data.name = text.trim();
       state.step = 'add_order';
       await bot.sendMessage(chatId, 'مرحله ۲/۷: ترتیب نمایش را وارد کنید (عدد):', {
         reply_markup: {
           inline_keyboard: [
-            [{ text: '1', callback_data: 'addorder_1' }, { text: '2', callback_data: 'addorder_2' }, { text: '3', callback_data: 'addorder_3' }],
-            [{ text: '4', callback_data: 'addorder_4' }, { text: '5', callback_data: 'addorder_5' }],
+            [
+              { text: '1', callback_data: 'addorder_1' },
+              { text: '2', callback_data: 'addorder_2' },
+              { text: '3', callback_data: 'addorder_3' },
+            ],
+            [
+              { text: '4', callback_data: 'addorder_4' },
+              { text: '5', callback_data: 'addorder_5' },
+            ],
             [{ text: '❌ انصراف', callback_data: 'admin_products' }],
           ],
         },
@@ -686,8 +765,11 @@ async function handleAdminState(msg, state) {
     }
 
     if (step === 'add_order') {
-      const n = parseInt(text);
-      if (isNaN(n) || n < 1) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
+      const n = parseInt(text, 10);
+      if (isNaN(n) || n < 1) {
+        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
+        return;
+      }
       state.data.order = n;
       state.step = 'add_orig_price';
       await bot.sendMessage(chatId, 'مرحله ۳/۷: قیمت اصلی (تومان):');
@@ -695,8 +777,11 @@ async function handleAdminState(msg, state) {
     }
 
     if (step === 'add_orig_price') {
-      const n = parseInt(text.replace(/,/g, ''));
-      if (isNaN(n)) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
+      const n = parseInt(text.replace(/,/g, ''), 10);
+      if (isNaN(n)) {
+        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
+        return;
+      }
       state.data.originalPrice = n;
       state.step = 'add_price';
       await bot.sendMessage(chatId, 'مرحله ۴/۷: قیمت تخفیف‌خورده (تومان):');
@@ -704,8 +789,11 @@ async function handleAdminState(msg, state) {
     }
 
     if (step === 'add_price') {
-      const n = parseInt(text.replace(/,/g, ''));
-      if (isNaN(n)) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
+      const n = parseInt(text.replace(/,/g, ''), 10);
+      if (isNaN(n)) {
+        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
+        return;
+      }
       state.data.price = n;
       state.step = 'add_desc';
       await bot.sendMessage(chatId, 'مرحله ۵/۷: توضیحات محصول:');
@@ -759,12 +847,14 @@ async function handleAdminState(msg, state) {
       return;
     }
 
-    // ─── Edit fields ───
     if (step === 'edit_name') {
       if (!text.trim()) return;
       const data = loadData();
-      const p = data.products.find(x => x.id === state.productId);
-      if (p) { p.name = text.trim(); saveData(data); }
+      const p = data.products.find(x => String(x.id) === String(state.productId));
+      if (p) {
+        p.name = text.trim();
+        saveData(data);
+      }
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ نام محصول ذخیره شد.');
       await showProductAdmin(chatId, state.productId);
@@ -773,8 +863,11 @@ async function handleAdminState(msg, state) {
 
     if (step === 'edit_desc') {
       const data = loadData();
-      const p = data.products.find(x => x.id === state.productId);
-      if (p) { p.description = text.trim(); saveData(data); }
+      const p = data.products.find(x => String(x.id) === String(state.productId));
+      if (p) {
+        p.description = text.trim();
+        saveData(data);
+      }
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ توضیحات ذخیره شد.');
       await showProductAdmin(chatId, state.productId);
@@ -782,8 +875,11 @@ async function handleAdminState(msg, state) {
     }
 
     if (step === 'edit_prices_orig') {
-      const n = parseInt(text.replace(/,/g, ''));
-      if (isNaN(n)) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
+      const n = parseInt(text.replace(/,/g, ''), 10);
+      if (isNaN(n)) {
+        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
+        return;
+      }
       state.data.originalPrice = n;
       state.step = 'edit_prices_disc';
       await bot.sendMessage(chatId, 'قیمت تخفیف‌خورده (تومان):');
@@ -791,11 +887,18 @@ async function handleAdminState(msg, state) {
     }
 
     if (step === 'edit_prices_disc') {
-      const n = parseInt(text.replace(/,/g, ''));
-      if (isNaN(n)) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
+      const n = parseInt(text.replace(/,/g, ''), 10);
+      if (isNaN(n)) {
+        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
+        return;
+      }
       const data = loadData();
-      const p = data.products.find(x => x.id === state.productId);
-      if (p) { p.originalPrice = state.data.originalPrice; p.price = n; saveData(data); }
+      const p = data.products.find(x => String(x.id) === String(state.productId));
+      if (p) {
+        p.originalPrice = state.data.originalPrice;
+        p.price = n;
+        saveData(data);
+      }
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ قیمت‌ها ذخیره شدند.');
       await showProductAdmin(chatId, state.productId);
@@ -803,11 +906,17 @@ async function handleAdminState(msg, state) {
     }
 
     if (step === 'edit_order') {
-      const n = parseInt(text);
-      if (isNaN(n) || n < 1) { await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.'); return; }
+      const n = parseInt(text, 10);
+      if (isNaN(n) || n < 1) {
+        await bot.sendMessage(chatId, '⚠️ عدد معتبر وارد کنید.');
+        return;
+      }
       const data = loadData();
-      const p = data.products.find(x => x.id === state.productId);
-      if (p) { p.order = n; saveData(data); }
+      const p = data.products.find(x => String(x.id) === String(state.productId));
+      if (p) {
+        p.order = n;
+        saveData(data);
+      }
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ ترتیب ذخیره شد.');
       await showProductAdmin(chatId, state.productId);
@@ -818,8 +927,12 @@ async function handleAdminState(msg, state) {
       const m = extractMedia(msg);
       if (m) {
         const data = loadData();
-        const p = data.products.find(x => x.id === state.productId);
-        if (p) { p.media = p.media || []; p.media.push(m); saveData(data); }
+        const p = data.products.find(x => String(x.id) === String(state.productId));
+        if (p) {
+          p.media = p.media || [];
+          p.media.push(m);
+          saveData(data);
+        }
         await bot.sendMessage(chatId, `✅ مدیا اضافه شد.`, {
           reply_markup: {
             inline_keyboard: [
@@ -837,8 +950,12 @@ async function handleAdminState(msg, state) {
       const m = extractMedia(msg);
       if (m) {
         const data = loadData();
-        const p = data.products.find(x => x.id === state.productId);
-        if (p) { p.files = p.files || []; p.files.push(m); saveData(data); }
+        const p = data.products.find(x => String(x.id) === String(state.productId));
+        if (p) {
+          p.files = p.files || [];
+          p.files.push(m);
+          saveData(data);
+        }
         await bot.sendMessage(chatId, `✅ فایل اضافه شد.`, {
           reply_markup: {
             inline_keyboard: [
@@ -852,7 +969,6 @@ async function handleAdminState(msg, state) {
       return;
     }
 
-    // ─── Text edit ───
     if (step && step.startsWith('edit_text_')) {
       const key = step.replace('edit_text_', '');
       if (!text.trim()) return;
@@ -864,7 +980,6 @@ async function handleAdminState(msg, state) {
       return;
     }
 
-    // ─── Card edit ───
     if (step === 'edit_card_number') {
       if (!text.trim()) return;
       const data = loadData();
@@ -886,14 +1001,12 @@ async function handleAdminState(msg, state) {
       await showAdminCard(chatId);
       return;
     }
-
   } catch (e) {
     console.error('Admin state error:', e);
   }
 }
 
-// ─── Extract media from message ────────────────────────────────────────────────
-
+// ─── Extract media from message ──────────────────────────────────────────────
 function extractMedia(msg) {
   if (!msg) return null;
   if (msg.photo && msg.photo.length > 0) {
@@ -912,13 +1025,12 @@ function extractMedia(msg) {
   return null;
 }
 
-// ─── Receipt Handler ──────────────────────────────────────────────────────────
-
+// ─── Receipt Handler ─────────────────────────────────────────────────────────
 async function handleReceiptFromUser(msg, userId) {
   const chatId = msg.chat.id;
   const data = loadData();
   const productId = userLastProduct[userId] || null;
-  const product = productId ? data.products.find(p => p.id === productId) : null;
+  const product = productId ? data.products.find(p => String(p.id) === String(productId)) : null;
 
   delete userPendingReceipt[userId];
 
@@ -943,22 +1055,17 @@ async function handleReceiptFromUser(msg, userId) {
     `📎 نوع: ${fileType}\n` +
     `💬 متن: ${msg.text || msg.caption || '—'}`;
 
-  // Forward/copy the receipt to admin
   try {
     await bot.forwardMessage(ADMIN_CHAT_ID, chatId, msg.message_id);
   } catch (e) {
-    // If forwarding fails, try sending as text
     console.error('Forward failed:', e.message);
   }
 
-  // Send report
   await bot.sendMessage(ADMIN_CHAT_ID, reportText, receiptAdminKeyboard(uid, productId || 'none'));
-
   await bot.sendMessage(chatId, '✅ رسید شما دریافت شد. پس از بررسی، نتیجه اعلام می‌شود.', mainMenuKeyboard());
 }
 
-// ─── Callback Query Handler ────────────────────────────────────────────────────
-
+// ─── Callback Query Handler ──────────────────────────────────────────────────
 bot.on('callback_query', async (query) => {
   if (!query || !query.data) return;
   const chatId = query.message ? query.message.chat.id : null;
@@ -968,6 +1075,32 @@ bot.on('callback_query', async (query) => {
 
   try {
     await bot.answerCallbackQuery(query.id).catch(() => {});
+
+    // ─── Quick links ───
+    if (data_str === 'quick_products') {
+      const data = loadData();
+      await handleProducts(chatId, data);
+      return;
+    }
+
+    if (data_str === 'quick_guide') {
+      const data = loadData();
+      await bot.sendMessage(chatId, data.texts.guide, mainMenuKeyboard());
+      return;
+    }
+
+    if (data_str === 'quick_support') {
+      const data = loadData();
+      await bot.sendMessage(chatId, data.texts.support, mainMenuKeyboard());
+      return;
+    }
+
+    if (data_str === 'quick_back') {
+      const data = loadData();
+      await bot.sendMessage(chatId, data.texts.welcome, mainMenuKeyboard());
+      await bot.sendMessage(chatId, '🔗 دسترسی سریع:', mainQuickLinksKeyboard());
+      return;
+    }
 
     // ─── User: view product ───
     if (data_str.startsWith('product_')) {
@@ -1085,7 +1218,7 @@ bot.on('callback_query', async (query) => {
 
     // ─── Add product callbacks ───
     if (data_str.startsWith('addorder_')) {
-      const n = parseInt(data_str.replace('addorder_', ''));
+      const n = parseInt(data_str.replace('addorder_', ''), 10);
       const state = getAdminState(chatId);
       if (state && state.step === 'add_order') {
         state.data.order = n;
@@ -1162,8 +1295,15 @@ bot.on('callback_query', async (query) => {
       await bot.sendMessage(chatId, 'ترتیب جدید را وارد کنید:', {
         reply_markup: {
           inline_keyboard: [
-            [{ text: '1', callback_data: `setorder_${productId}_1` }, { text: '2', callback_data: `setorder_${productId}_2` }, { text: '3', callback_data: `setorder_${productId}_3` }],
-            [{ text: '4', callback_data: `setorder_${productId}_4` }, { text: '5', callback_data: `setorder_${productId}_5` }],
+            [
+              { text: '1', callback_data: `setorder_${productId}_1` },
+              { text: '2', callback_data: `setorder_${productId}_2` },
+              { text: '3', callback_data: `setorder_${productId}_3` },
+            ],
+            [
+              { text: '4', callback_data: `setorder_${productId}_4` },
+              { text: '5', callback_data: `setorder_${productId}_5` },
+            ],
             [{ text: '❌ انصراف', callback_data: `ap_view_${productId}` }],
           ],
         },
@@ -1174,10 +1314,13 @@ bot.on('callback_query', async (query) => {
     if (data_str.startsWith('setorder_')) {
       const parts = data_str.split('_');
       const productId = parts[1];
-      const n = parseInt(parts[2]);
+      const n = parseInt(parts[2], 10);
       const data = loadData();
-      const p = data.products.find(x => x.id === productId);
-      if (p) { p.order = n; saveData(data); }
+      const p = data.products.find(x => String(x.id) === String(productId));
+      if (p) {
+        p.order = n;
+        saveData(data);
+      }
       clearAdminState(chatId);
       await bot.sendMessage(chatId, '✅ ترتیب ذخیره شد.');
       await showProductAdmin(chatId, productId);
@@ -1199,8 +1342,11 @@ bot.on('callback_query', async (query) => {
     if (data_str.startsWith('ape_clear_media_')) {
       const productId = data_str.replace('ape_clear_media_', '');
       const data = loadData();
-      const p = data.products.find(x => x.id === productId);
-      if (p) { p.media = []; saveData(data); }
+      const p = data.products.find(x => String(x.id) === String(productId));
+      if (p) {
+        p.media = [];
+        saveData(data);
+      }
       await bot.sendMessage(chatId, '✅ مدیاهای محصول پاک شدند.');
       startEditField(chatId, 'media', productId);
       return;
@@ -1209,8 +1355,11 @@ bot.on('callback_query', async (query) => {
     if (data_str.startsWith('ape_clear_files_')) {
       const productId = data_str.replace('ape_clear_files_', '');
       const data = loadData();
-      const p = data.products.find(x => x.id === productId);
-      if (p) { p.files = []; saveData(data); }
+      const p = data.products.find(x => String(x.id) === String(productId));
+      if (p) {
+        p.files = [];
+        saveData(data);
+      }
       await bot.sendMessage(chatId, '✅ فایل‌های محصول پاک شدند.');
       startEditField(chatId, 'files', productId);
       return;
@@ -1235,8 +1384,11 @@ bot.on('callback_query', async (query) => {
     if (data_str.startsWith('ape_toggle_')) {
       const productId = data_str.replace('ape_toggle_', '');
       const data = loadData();
-      const p = data.products.find(x => x.id === productId);
-      if (p) { p.active = !p.active; saveData(data); }
+      const p = data.products.find(x => String(x.id) === String(productId));
+      if (p) {
+        p.active = !p.active;
+        saveData(data);
+      }
       await bot.sendMessage(chatId, `✅ وضعیت محصول: ${p && p.active ? 'فعال ✅' : 'غیرفعال ❌'}`);
       await showProductAdmin(chatId, productId);
       return;
@@ -1258,7 +1410,7 @@ bot.on('callback_query', async (query) => {
     if (data_str.startsWith('ape_delete_confirm_')) {
       const productId = data_str.replace('ape_delete_confirm_', '');
       const data = loadData();
-      data.products = data.products.filter(p => p.id !== productId);
+      data.products = data.products.filter(p => String(p.id) !== String(productId));
       saveData(data);
       await bot.sendMessage(chatId, '✅ محصول حذف شد.');
       await showAdminProducts(chatId);
@@ -1297,19 +1449,28 @@ bot.on('callback_query', async (query) => {
 
     // ─── Receipt admin actions ───
     if (data_str.startsWith('receipt_send_')) {
-      const parts = data_str.replace('receipt_send_', '').split('_');
-      const targetUserId = parts[0];
-      const productId = parts[1];
+      const payload = data_str.slice('receipt_send_'.length);
+      const firstUnderscore = payload.indexOf('_');
+      if (firstUnderscore === -1) {
+        await bot.sendMessage(chatId, '⚠️ داده نامعتبر است.');
+        return;
+      }
+
+      const targetUserId = payload.slice(0, firstUnderscore);
+      const productId = payload.slice(firstUnderscore + 1);
+
       if (!productId || productId === 'none') {
         await bot.sendMessage(chatId, '⚠️ محصولی انتخاب نشده. از «ارسال محصول دیگر» استفاده کنید.');
         return;
       }
+
       const data = loadData();
-      const product = data.products.find(p => p.id === productId);
+      const product = data.products.find(p => String(p.id) === String(productId));
       if (!product) {
         await bot.sendMessage(chatId, '❌ محصول یافت نشد.');
         return;
       }
+
       await sendProductFiles(targetUserId, product);
       await bot.sendMessage(targetUserId, data.texts.paymentConfirm);
       trackSale(data, targetUserId, productId, '', '');
@@ -1326,15 +1487,23 @@ bot.on('callback_query', async (query) => {
     }
 
     if (data_str.startsWith('sendother_')) {
-      const parts = data_str.replace('sendother_', '').split('_');
-      const targetUserId = parts[0];
-      const productId = parts[1];
+      const payload = data_str.slice('sendother_'.length);
+      const firstUnderscore = payload.indexOf('_');
+      if (firstUnderscore === -1) {
+        await bot.sendMessage(chatId, '⚠️ داده نامعتبر است.');
+        return;
+      }
+
+      const targetUserId = payload.slice(0, firstUnderscore);
+      const productId = payload.slice(firstUnderscore + 1);
+
       const data = loadData();
-      const product = data.products.find(p => p.id === productId);
+      const product = data.products.find(p => String(p.id) === String(productId));
       if (!product) {
         await bot.sendMessage(chatId, '❌ محصول یافت نشد.');
         return;
       }
+
       await sendProductFiles(targetUserId, product);
       await bot.sendMessage(targetUserId, data.texts.paymentConfirm);
       trackSale(data, targetUserId, productId, '', '');
@@ -1350,15 +1519,15 @@ bot.on('callback_query', async (query) => {
       await bot.sendMessage(chatId, '✅ پیام رد پرداخت ارسال شد.');
       return;
     }
-
   } catch (e) {
     console.error('Callback error:', e);
-    try { await bot.sendMessage(chatId, '⚠️ خطایی رخ داد. دوباره تلاش کنید.'); } catch (_) {}
+    try {
+      await bot.sendMessage(chatId, '⚠️ خطایی رخ داد. دوباره تلاش کنید.');
+    } catch (_) {}
   }
 });
 
-// ─── Backup ───────────────────────────────────────────────────────────────────
-
+// ─── Backup ────────────────────────────────────────────────────────────────
 async function sendBackup(chatId) {
   try {
     if (!fs.existsSync(DATA_PATH)) {
@@ -1372,8 +1541,7 @@ async function sendBackup(chatId) {
   }
 }
 
-// ─── Error Handler ────────────────────────────────────────────────────────────
-
+// ─── Error Handler ──────────────────────────────────────────────────────────
 bot.on('polling_error', (err) => {
   console.error('Polling error:', err.message);
 });
