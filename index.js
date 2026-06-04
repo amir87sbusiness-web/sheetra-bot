@@ -447,7 +447,6 @@ function buildProductCaption(product, data) {
     `🏦 شماره کارت:\n` +
     `<code>${escapeHtml(formatCardNumber(data.card.number))}</code>\n` +
     `👤 به نام: ${escapeHtml(data.card.owner)}\n` +
-    `👈 روی دکمه کپی شماره کارت بزنید تا شماره بدون خط تیره کپی شود.\n\n` +
     `پس از واریز، رسید پرداخت را همین‌جا ارسال کنید. ✨`
   );
 }
